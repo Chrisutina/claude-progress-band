@@ -215,16 +215,103 @@ test('the strip says what the main conversation does and never freezes: dancing 
   expect((await strip()).texts).toContain('空闲')
 })
 
-test('past the 5-hour stop line, the next tool result tells Claude once to wrap up and wait', async ($, on) => {
-  mock.clock(on, { now: NOW })
+test('past the 5-hour alert line the open bar flashes and the meters say so, while Claude works on untold', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
   stubSession(on, new Map())
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('tool.call', () => ({ result: 'ok' }))
+  on('classic.Stop', () => ({}))
   await $.session.start(START)
-  await $.session.measure({ changed: ['rateLimits'], context: { tokens: 1, window: 2, percent: 20 }, rateLimits: [{ kind: 'five_hour', percentUsed: 86, resetsAt: new Date(RESET_5H).toISOString() }] })
+  await $.tool.call({ tool: TOOL, id: 'job', title: '任务', stages: [{ name: 'S', steps: [{ title: 'A' }, { title: 'B' }] }] })
+  await $.tool.call({ tool: TOOL, id: 'finished', title: '已完成任务', stages: [{ name: 'S', steps: [{ title: 'A' }] }], state: 'done' })
+  const resetsAt = NOW + 60_000
+  const measure = (percentUsed: number) =>
+    $.session.measure({ changed: ['rateLimits'], context: { tokens: 1, window: 2, percent: 20 }, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt: new Date(resetsAt).toISOString() }] })
+  const look = async (surface: 'terminal' | 'desktop') => {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const alert = JSON.stringify((await ui.find({ key: 'quota' })) ?? null)
+    const bar = JSON.stringify(await ui.find({ key: 'bar-job' }))
+    const finished = JSON.stringify(await ui.find({ key: 'bar-finished' }))
+    await ui.unmount()
+    return { alert, bar, finished }
+  }
+
+  await measure(84)
+  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toBe('null')
+  expect((await look('desktop')).bar).not.toContain('class=\\"qa\\"')
+
+  await measure(85)
   await $.turn.start({ text: 'go', turnId: 't1' })
-  expect(JSON.stringify(await $.tool.call({ tool: 'Read', file_path: '/work/a.ts' }))).toContain("past the user's stop line of 85%")
-  // said once for the window: the person's next instruction carries on undisturbed
-  expect(JSON.stringify(await $.tool.call({ tool: 'Read', file_path: '/work/b.ts' }))).not.toContain('stop line')
+  // Claude reads nothing of it: the tool result comes back as the tool gave it
+  const ran = await $.tool.call({ tool: 'Read', file_path: '/work/a.ts' })
+  expect(ran).toMatchObject({ result: 'ok' })
+  expect(JSON.stringify(ran)).not.toContain('progress-band')
+  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toContain('额度超过阈值')
+  // on the desktop both blink by themselves: a red ring over the bar, a red pill by the 5-hour meter
+  const desk = await look('desktop')
+  expect(desk.bar).toContain('class=\\"qa\\"')
+  expect(desk.alert).toContain('class=\\"qa\\"')
+  expect(desk.finished).toBeDefined()
+  expect(desk.finished).not.toContain('class=\\"qa\\"')
+  // the turn ends and nothing waits for the person: the bar keeps running
+  await $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'ok' })
+  expect((await look('desktop')).bar).toContain('任务：进行中')
+  // an expired reading must clear the alert even before a new usage measurement arrives
+  await clock.advance(resetsAt - NOW)
+  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toBe('null')
+  expect((await look('desktop')).bar).not.toContain('class=\\"qa\\"')
+})
+
+test('with language en the band says all of it in English', { options: { language: 'en' } }, async ($, on) => {
+  mock.clock(on, { now: NOW })
+  stubSession(on, new Map())
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('agent.spawn', () => ({ model: 'claude-haiku-4-5-20251001', agentId: 'ag1' }))
+  on('turn.step', async function* () {
+    return {
+      turnId: 't1',
+      index: 0,
+      answer: '',
+      toolUses: [],
+      stopReason: 'end_turn',
+      usage: { input_tokens: 1200, output_tokens: 900_000, cache_creation_input_tokens: 2000, cache_read_input_tokens: 50_000, model: 'claude-opus-5-5' },
+    }
+  })
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL, id: 'ui', title: 'Interface', stages: [{ name: 'Build', steps: [{ title: 'A' }, { title: 'B' }] }, { name: 'Ship', steps: [{ title: 'C' }] }] })
+  await $.tool.call({ tool: TOOL, id: 'ui', next: true })
+  await $.agent.spawn({
+    tool_use_id: 'tu1',
+    prompt: 'look around',
+    description: 'Scan parts',
+    subagentType: 'Explore',
+    provider: { plugin: 'engine', tier: 'core' },
+    parentModel: 'claude-opus-5-5',
+    background: false,
+    fork: false,
+  })
+  for await (const chunk of $.turn.step({ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1 })) void chunk
+  await $.session.measure({
+    changed: ['rateLimits'],
+    context: { tokens: 1, window: 2, percent: 20 },
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 90, resetsAt: new Date(RESET_5H).toISOString() },
+      { kind: 'seven_day', percentUsed: 5, resetsAt: new Date(NOW + 3 * 24 * 3_600_000).toISOString() },
+    ],
+  })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const drawn = JSON.stringify(await ui.drawn())
+    // no Chinese anywhere: words, alt texts and drawings alike
+    expect(drawn).not.toMatch(/[　-鿿＀-￯]/)
+    for (const words of ['Idle', 'Context', '5-hour', 'Weekly', 'Quota over threshold', 'starting']) expect(drawn).toContain(words)
+    if (surface === 'desktop') {
+      for (const words of ['Session / week tokens · this machine', 'Interface: running, Build 2/2, 33%', 'Build stage', 'not reached', 'cache write', 'other sessions']) {
+        expect(drawn).toContain(words)
+      }
+    }
+    await ui.unmount()
+  }
 })

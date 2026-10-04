@@ -1,13 +1,13 @@
 # claude-progress-band
 
-Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**像素进度条**和它的**子代理**。
+Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**像素进度条**和它的**子代理**。界面文字可选中文或英文。
 
-[English](#english)
+版本 **0.3.0** · [更新记录](CHANGELOG.md) · [English](#english)
 
 ![浅色主题](docs/light.png)
 ![深色主题](docs/dark.png)
 
-<sub>预览为静态截图；实际使用时管道里的光会流动，像素会闪烁。</sub>
+<sub>预览为中文界面的静态截图；实际使用时管道里的光会流动，像素会闪烁。</sub>
 
 ## 功能
 
@@ -16,7 +16,7 @@ Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 
 - 限额表上的竖线标出窗口已经过去多少：用量跑到竖线前面，说明消耗快于恢复。
 - 显示重置倒计时，5 小时窗口再显示重置时刻（本地时区）。
 - 每周表后合并显示"本会话 / 本周" token（K / M / B），前面是一个小桑基图标；悬停展开完整桑基图：输入 / 输出 / 缓存写 / 缓存读四类汇入本周总量，再分到本会话和其他会话。
-- 额度提醒：5 小时额度达到 85% 时，提示 Claude 在当前步骤收尾、说明进度后停下，等你的下一个指令（每个窗口只提醒一次，进行中的进度条转为"需要输入"）。这是收尾提示，不是引擎强制停止。
+- 额度提醒：5 小时用量达到 85% 时，未完成的任务进度条整条闪烁红框，5 小时表旁边闪出"额度超过阈值"，直到窗口重置。只是界面提醒：不通知 Claude，也不打断或暂停当前工作。
 
 **当前状态**（和用量表同一排，排在最前）
 - "思考中"或正在用的工具名，三根音柱跳动；空闲时显示"空闲"，音柱变灰并缓慢摆动。
@@ -37,8 +37,9 @@ Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 
 
 **适配**
 - 文字使用应用自身的字体和颜色，浅色、深色主题都能看清。
-- 遵循系统的"减少动态效果"设置。
-- 终端里用字符画显示同样的信息。
+- 界面文字可选中文（默认）或英文，见[语言](#语言)。
+- 遵循系统的"减少动态效果"设置（额度提醒改为常亮红框）。
+- 终端里用字符画显示同样的信息，额度提醒每秒闪一次。
 
 ## 安装
 
@@ -70,6 +71,23 @@ claude --plugin-dir "D:\Plugins\claude-progress-band"
 
 > 模组和 Claude Code 同权限运行、没有沙箱。安装前请先看一遍 `hooks/register.tsx`。
 
+## 语言
+
+界面文字默认中文，可切换成英文（`en`）。给 Claude 看的规则和工具返回本来就是英文，不受影响。
+
+- 终端：运行 `/config`，把 progress-band 的 **Language** 改成 `en`，模组会自动重载。
+- 桌面版没有 `/config`：在 `~/.claude/settings.json` 里加下面这段，然后新开会话或运行 `/reload-plugins`。
+
+```json
+{
+  "pluginConfigs": {
+    "progress-band@progress-band": { "options": { "language": "en" } }
+  }
+}
+```
+
+用 `--plugin-dir` 或 `CLAUDE_CODE_PLUGIN_DIRS` 从本地目录加载时，键名换成 `progress-band`。
+
 ## 工作原理
 
 - 模组注册一个工具 `plan_progress`，并在系统提示词里加一小段规则：需要多于约 3 次编辑或命令的任务，Claude 先建一条进度条，之后用短操作推进，例如 `{id, next:true}`、`{id, done:[...], active:"..."}`、`{id, failed:"...", note}`、`{id, state:"needs_input", note}`。名字不存在的步骤会被拒绝，并返回该进度条的步骤列表。
@@ -82,7 +100,7 @@ claude --plugin-dir "D:\Plugins\claude-progress-band"
 ## 已知限制
 
 - mods API 仍是早期版本，Claude Code 升级后可能需要跟着改。
-- 只在 Windows 桌面版上实际使用过；终端界面只经过自动测试；macOS、VS Code 和手机端没有实测。
+- 只在 Windows 桌面版上实际使用过；终端界面和英文界面只经过自动测试和截图检查；macOS、VS Code 和手机端没有实测。
 - 终端里没有悬停，时间直接写在进度条后面。
 
 ## 开发
@@ -97,7 +115,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计以及桌面 / 终端渲染边界；本次发布在 Windows、Claude Code **2.1.288** 上通过 **26 项测试**。
+第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；本次发布在 Windows、Claude Code **2.1.288** 上通过 **27 项测试**。
 
 模组从这个目录加载一次之后，Claude Code 会写出 `.claude-plugin/types/`（已加入 `.gitignore`），`tsconfig.json` 会用到它；也可以在会话里运行 `/plugin-types` 生成类型。
 
@@ -117,13 +135,15 @@ claude plugin test .
 
 ## English
 
-A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly usage** (with the week's tokens), and a **live pixel progress bar** for each task Claude splits into stages and steps, with its **subagents** listed under it.
+A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly usage** (with the week's tokens), and a **live pixel progress bar** for each task Claude splits into stages and steps, with its **subagents** listed under it. The band speaks Chinese (default) or English: set `language` to `en`, see [Language](#language) below.
+
+<sub>The screenshots above show the Chinese UI, frozen; in use, light flows down the pipes and the pixels twinkle.</sub>
 
 **Features**
 - **Usage meters:** green / amber / red by level, and a tick on each limit marking how much of its window has gone. Reset countdowns, plus the 5-hour reset time in local time.
 - **Tokens:** this session's and the week's in one item after the weekly meter ("session / week", in K / M / B), led by a tiny Sankey icon. Hover for the full Sankey: input, output, cache write and cache read flow into the week's total, which splits into this session and the other sessions.
-- **Quota reminder:** once the 5-hour window reaches 85%, Claude is prompted to finish the current step at a clean point, say what is done and what is left, and wait for your next instruction. It is said once per window, and the open bar turns to "needs input". This is a prompt, not an engine-enforced stop.
-- **Current state:** leads the meters' row: "thinking" or the tool in use, with dancing level bars; "idle" with grey bars swaying slowly. It leaves out what the app already shows: the turn time (the turn footer) and the model and effort (the model picker).
+- **Quota alert:** once the 5-hour window reaches 85%, every unfinished task bar flashes a red ring and a blinking "Quota over threshold" pill appears next to the 5-hour meter, until the window resets. It is a visual alert only: Claude is not told, and nothing stops or pauses the work.
+- **Current state:** leads the meters' row: "Thinking" or the tool in use, with dancing level bars; "Idle" with grey bars swaying slowly. It leaves out what the app already shows: the turn time (the turn footer) and the model and effort (the model picker).
 - **Task rows:** state, title, bar, percent, close button.
   - The bar is a pixel pipe that packs denser toward a white thumb.
   - Light flows down the pipe while something works on it: the current turn, or the task's subagents. More running agents means more light. While the work pauses, the light keeps drifting at half speed and the pixels twinkle softly, so the bar never freezes.
@@ -131,7 +151,7 @@ A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly 
 - **Four states:** running, needs input, error, done. A finished bar turns green and shows the total time.
 - **Plans** can change mid-run; finished steps are kept by title. Bars are saved per session and come back on resume.
 - **Subagent rows:** name, model and effort, current tool, time.
-- **Themes and motion:** follows the app's light or dark theme and the OS "reduce motion" setting. The terminal shows a text version.
+- **Themes and motion:** follows the app's light or dark theme and the OS "reduce motion" setting (the quota alert then holds a steady red ring). The terminal shows a text version, where the quota alert blinks once a second.
 
 **Install** (Claude Code v2.1.286 or later; if the mod does not load on v2.1.286, set `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and restart):
 
@@ -143,6 +163,25 @@ The repository is `claude-progress-band`; the plugin and marketplace are both na
 /reload-plugins
 ```
 
+To load it from a local folder instead, run `claude --plugin-dir /path/to/claude-progress-band`, or, in the desktop app, put the folder's absolute path in `env.CLAUDE_CODE_PLUGIN_DIRS` of `~/.claude/settings.json`.
+
+### Language
+
+The band's words are Chinese by default. What Claude reads (the rules, tool results) is English either way.
+
+- Terminal: run `/config` and set progress-band's **Language** to `en`; the mod reloads by itself.
+- Desktop app (no `/config`): add this to `~/.claude/settings.json`, then start a new session or run `/reload-plugins`.
+
+```json
+{
+  "pluginConfigs": {
+    "progress-band@progress-band": { "options": { "language": "en" } }
+  }
+}
+```
+
+When the mod loads from a local folder (`--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`), the key is `progress-band`.
+
 **Development** (no separate build or `npm install`):
 
 ```bash
@@ -153,9 +192,9 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-Release verification: **26 tests passed on Windows with Claude Code 2.1.288**. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
+Release verification: **27 tests passed on Windows with Claude Code 2.1.288**, the quota alert and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
 
-The desktop UI has been used on Windows. Terminal rendering has automated coverage; macOS, VS Code and mobile have not been tested manually. The mods API is early and may change with Claude Code updates.
+The desktop UI has been used on Windows. Terminal rendering and the English UI have automated tests and screenshot checks; macOS, VS Code and mobile have not been tested manually. The mods API is early and may change with Claude Code updates.
 
 **How it works**
 - The mod registers a `plan_progress` tool and adds a short rule to the system prompt, so Claude creates a bar for multi-step work and moves it with short ops.

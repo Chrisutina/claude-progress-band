@@ -14,8 +14,9 @@ const usage = atom({ plugin: 'progress-band', key: 'usage' } as const, { context
 // the turn took and the model it runs on stay out: the app's turn footer and model picker show them
 const activity = atom({ plugin: 'progress-band', key: 'activity' } as const, { state: 'idle', tool: null })
 const session = atom({ plugin: 'progress-band', key: 'session' } as const, { tokens: 0 })
-// the person's stop line: past this share of the 5-hour window, Claude wraps up at a clean point and waits for them
-const QUOTA_STOP = 85
+// the person's alert line: past this share of the 5-hour window the open bars flash and the meters say so;
+// Claude is not told, so the work goes on
+const QUOTA_ALERT = 85
 
 const MAX_BARS = 3
 const MAX_AGENTS = 30 // kept per bar; the oldest finished go first
@@ -27,6 +28,67 @@ const STATUSES: StepStatus[] = ['pending', 'active', 'done', 'error', 'skipped']
 
 const RULES = `# Progress bars
 Tasks needing more than ~3 edits or commands get a bar via ${TOOL}: create it once with the full breakdown (2-7 stages of steps {title}, or one stage for a flat list; titles of at most 4 words, in the user's language; the first open step becomes active), then move it with short calls: {id, next:true} when the active step is finished, or {id, done:[...], active:"..."}, {id, failed:"...", note}. When the plan changes, resend stages under the same id; steps sent without a status keep their done by title. Send state "needs_input" with a note before asking the user to decide. Never describe the bars to the user.`
+
+// ---------- words ----------
+// every word the band shows, in the language the manifest's userConfig `language` picks (/config);
+// what Claude reads (the rules, tool results, refusals) is English in both
+const ZH = {
+  state: { running: '进行中', needs_input: '需要输入', error: '出错', done: '完成' } as Record<PlanState, string>,
+  meter: { context: '上下文', five_hour: '5小时', seven_day: '每周', spend_limit: '额度' } as Record<string, string>,
+  kinds: ['输入', '输出', '缓存写', '缓存读'],
+  session: '本会话',
+  others: '其他会话',
+  week: '本周',
+  tokensCard: '本会话 / 本周 token · 本机会话',
+  idle: '空闲',
+  thinking: '思考中',
+  tool: '工具',
+  asking: '等你回答',
+  starting: '启动中',
+  approval: '待批准',
+  stopped: '已停止',
+  failed: '失败',
+  notReached: '未到达',
+  quota: '额度超过阈值',
+  // the token card's width; its labels take the room either side of the flows
+  sankeyW: 300,
+  stageEnd: (stage: string) => `${stage} 阶段`,
+  ran: (time: string) => `已运行 ${time}`,
+  more: (agents: number, done: number) => `还有 ${agents} 个子代理 · ${done} 个已完成`,
+  hover: (title: string) => `${title}：悬停查看时间`,
+  rowDone: (title: string, steps: number, time: string) => `${title}：完成，共 ${steps} 步${time ? `，用时 ${time}` : ''}`,
+  rowOpen: (title: string, state: string, at: string, percent: number, note: string) => `${title}：${state}，${at}，${percent}%${note ? `，${note}` : ''}`,
+  tokensAlt: (week: string, kinds: string[], session: string, others: string) => `本周 ${week} tokens：${kinds.join('，')}；本会话 ${session}，其他会话 ${others}`,
+}
+const EN: typeof ZH = {
+  state: { running: 'running', needs_input: 'needs input', error: 'error', done: 'done' },
+  meter: { context: 'Context', five_hour: '5-hour', seven_day: 'Weekly', spend_limit: 'Spend' },
+  kinds: ['input', 'output', 'cache write', 'cache read'],
+  session: 'this session',
+  others: 'other sessions',
+  week: 'this week',
+  tokensCard: 'Session / week tokens · this machine',
+  idle: 'Idle',
+  thinking: 'Thinking',
+  tool: 'Tool',
+  asking: 'Waiting for you',
+  starting: 'starting',
+  approval: 'needs approval',
+  stopped: 'stopped',
+  failed: 'failed',
+  notReached: 'not reached',
+  quota: 'Quota over threshold',
+  sankeyW: 360,
+  stageEnd: stage => `${stage} stage`,
+  ran: time => `running for ${time}`,
+  more: (agents, done) => `${agents} more agents · ${done} done`,
+  hover: title => `${title}: hover for times`,
+  rowDone: (title, steps, time) => `${title}: done, ${steps} steps${time ? `, took ${time}` : ''}`,
+  rowOpen: (title, state, at, percent, note) => `${title}: ${state}, ${at}, ${percent}%${note ? `, ${note}` : ''}`,
+  tokensAlt: (week, kinds, session, others) => `This week ${week} tokens: ${kinds.join(', ')}; this session ${session}, other sessions ${others}`,
+}
+// set by register from its options; a change in /config reloads the module
+let say = ZH
 
 type Raw = Record<string, unknown>
 const str = (v: unknown, max = 120) => (typeof v === 'string' ? [...v.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ufffe\uffff]|[\ud800-\udfff]/gu, '').replace(/\s+/g, ' ').trim()].slice(0, max).join('') : '')
@@ -233,7 +295,8 @@ const compact = (n: number): string => {
 // head, like matter carried down a pipe, more of it the more agents run, and the pixels sparkle hardest
 // at the head; while the work pauses the light keeps drifting at half speed and the pixels twinkle softly,
 // so a pause never looks frozen. A running state's icon is three level bars, dancing while work runs and
-// swaying slowly while it pauses. A wait breathes, an error and a done bar stand still, every change glides in .42 s. Words
+// swaying slowly while it pauses. A wait breathes, an error and a done bar stand still, every change glides in .42 s.
+// Past the quota alert line every open bar flashes a red ring, and a red pill by the 5-hour meter blinks its words. Words
 // are the app's own text, so they follow its light or dark theme; the drawings use mid-tone colours
 // that read on either.
 type Tone = { light: string; mid: string; deep: string }
@@ -245,7 +308,6 @@ const TONE: Record<PlanState, Tone> = {
 }
 const STATE_COLOR: Record<PlanState, string> = { running: TONE.running.mid, needs_input: TONE.needs_input.mid, error: TONE.error.mid, done: TONE.done.mid }
 const STATE_GLYPH: Record<PlanState, string> = { running: '●', needs_input: '?', error: '!', done: '✓' }
-const STATE_NAME: Record<PlanState, string> = { running: '进行中', needs_input: '需要输入', error: '出错', done: '完成' }
 const AGENT_STATE: Record<AgentRun['state'], PlanState> = { running: 'running', waiting: 'needs_input', done: 'done', error: 'error' }
 // budgets borrow the state tones: green while there is room, amber past half, red past 80%
 const levelOf = (used: number): PlanState => (used >= 80 ? 'error' : used >= 50 ? 'needs_input' : 'done')
@@ -281,8 +343,9 @@ const CSS = `<style>
 @keyframes eq{from{transform:scaleY(.28)}to{transform:scaleY(1)}}
 .eq.slow{animation-name:eqs;animation-duration:2.4s}.e1.slow{animation-duration:1.9s}.e2.slow{animation-duration:3s}
 @keyframes eqs{from{transform:scaleY(.45)}to{transform:scaleY(1)}}
-.tn{font:600 11.5px ${SANS};fill:${THUMB_INK}}.tc{font:500 10.5px ${MONO};fill:${THUMB_DIM}}.tg{font:700 11.5px ${SANS}}
-@media (prefers-reduced-motion:reduce){.tw0,.tw1,.tw2,.tw3,.tw4,.tw5,.ts0,.ts1,.ts2,.ts3,.ts4,.ts5,.br{animation:none}.flow,.glide,.eq{animation:none!important}}
+.qa{animation:qa 1.2s ease-in-out infinite}@keyframes qa{0%,100%{opacity:1}50%{opacity:.2}}
+.tn{font:600 11.5px ${SANS};fill:${THUMB_INK}}.tc{font:500 10.5px ${MONO};fill:${THUMB_DIM}}.tg{font:700 11.5px ${SANS}}.qt{font:600 11.5px ${SANS};fill:${TONE.error.mid}}
+@media (prefers-reduced-motion:reduce){.tw0,.tw1,.tw2,.tw3,.tw4,.tw5,.ts0,.ts1,.ts2,.ts3,.ts4,.ts5,.br,.qa{animation:none}.flow,.glide,.eq{animation:none!important}}
 </style>`
 
 const svgOpen = (W: number, H: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
@@ -451,25 +514,23 @@ const IDLE_ICON = `${svgOpen(ICON, ICON)}${CSS}${levelBars(() => 'fill="#8C8A84"
 // than a hairline, so all four kinds show (cache reads dwarf the rest); the card's labels carry the figures.
 // Light drifts through the bands as it does down the pipes, at half speed while no turn runs. Mid tones and
 // mid-grey words, since the app draws the card in its own light or dark theme
-const SANKEY_KINDS = ['输入', '输出', '缓存写', '缓存读']
 const SANKEY_FROM = ['#60A5FA', '#3B82F6', '#818CF8', '#6366F1']
 const SANKEY_HUB = '#8B5CF6'
 const SANKEY_TO = ['#F43F5E', '#FB7185']
 const SANKEY_ICON_W = 36
 const SANKEY_ICON_H = 14
-const SANKEY_W = 300
 const SANKEY_H = 112
 
 const sankeyAlt = (kinds: TokenCounts, own: number) => {
   const total = tokenSum(kinds)
   const mine = Math.min(own, total)
-  return `本周 ${compact(total)} tokens：${SANKEY_KINDS.map((k, i) => `${k} ${compact(kinds[i] ?? 0)}`).join('，')}；本会话 ${compact(mine)}，其他会话 ${compact(total - mine)}`
+  return say.tokensAlt(compact(total), say.kinds.map((k, i) => `${k} ${compact(kinds[i] ?? 0)}`), compact(mine), compact(total - mine))
 }
 
 function sankeySvg(kinds: TokenCounts, own: number, isLive: boolean, isCard: boolean): string {
-  const W = isCard ? SANKEY_W : SANKEY_ICON_W
+  const W = isCard ? say.sankeyW : SANKEY_ICON_W
   const H = isCard ? SANKEY_H : SANKEY_ICON_H
-  const side = isCard ? 84 : 0 // room for the labels either side
+  const side = isCard ? (W - 132) / 2 : 0 // room for the labels either side; the flows keep 132 px
   const node = isCard ? 6 : 3
   const gap = isCard ? 5 : 1
   const pad = isCard ? 16 : 0
@@ -521,9 +582,9 @@ function sankeySvg(kinds: TokenCounts, own: number, isLive: boolean, isCard: boo
   const label = (x: number, y: number, anchor: string, name: string, value: number) =>
     `<text x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" class="sl">${name} <tspan class="sv">${compact(value)}</tspan></text>`
   const words = isCard
-    ? spread(lh.map((h, i) => (ly[i] ?? 0) + h / 2 + 3.5)).map((y, i) => label(x0 - 6, y, 'end', SANKEY_KINDS[i] ?? '', kinds[i] ?? 0)).join('') +
-      spread(rh.map((h, j) => (ry[j] ?? 0) + h / 2 + 3.5)).map((y, j) => label(x2 + node + 6, y, 'start', j === 0 ? '本会话' : '其他会话', right[j] ?? 0)).join('') +
-      label(xh + node / 2, hubY - 5, 'middle', '本周', total)
+    ? spread(lh.map((h, i) => (ly[i] ?? 0) + h / 2 + 3.5)).map((y, i) => label(x0 - 6, y, 'end', say.kinds[i] ?? '', kinds[i] ?? 0)).join('') +
+      spread(rh.map((h, j) => (ry[j] ?? 0) + h / 2 + 3.5)).map((y, j) => label(x2 + node + 6, y, 'start', j === 0 ? say.session : say.others, right[j] ?? 0)).join('') +
+      label(xh + node / 2, hubY - 5, 'middle', say.week, total)
     : ''
   return (
     `${svgOpen(W, H)}${CSS}<style>@keyframes sk{to{transform:translateX(${spacing}px)}}.sl{font:500 10.5px ${SANS};fill:${THUMB_DIM}}.sv{font-weight:700}</style>` +
@@ -574,17 +635,18 @@ const drawnRows = new WeakMap<Plan, { key: string; row: Row }>()
 // the head each row showed last time it was drawn, so a change glides from there
 const lastHead = new Map<string, number>()
 
-// traffic: how much works on the bar right now, the main turn and each running agent counting one
-function trackSvg(p: Plan, W: number, traffic: number): Row {
-  const key = `${W}|${traffic}`
+// traffic: how much works on the bar right now, the main turn and each running agent counting one;
+// isAlert: the 5-hour window is past the person's alert line
+function trackSvg(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
+  const key = `${W}|${traffic}|${isAlert}`
   const cached = drawnRows.get(p)
   if (cached?.key === key) return cached.row
-  const row = drawTrack(p, W, traffic)
+  const row = drawTrack(p, W, traffic, isAlert)
   drawnRows.set(p, { key, row })
   return row
 }
 
-function drawTrack(p: Plan, W: number, traffic: number): Row {
+function drawTrack(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
   const H = ROW_H
   const cy = H / 2
   const w = where(p)
@@ -618,8 +680,8 @@ function drawTrack(p: Plan, W: number, traffic: number): Row {
         const doneAts = ended.map(st => st?.doneAt)
         const reachedAt = doneAts.length > 0 && doneAts.every(t => t !== undefined) ? Math.max(...(doneAts as number[])) : undefined
         const ms = isStage ? took.stages[i - 1] : took.steps.get(s.steps[j - 1] as PlanStep)
-        const label = isStage ? `${before?.name ?? ''} 阶段` : (s.steps[j - 1]?.title ?? '')
-        const data = reachedAt === undefined ? '未到达' : `${clock(reachedAt)}${ms === undefined ? '' : ` · ${elapsed(ms)}`}`
+        const label = isStage ? say.stageEnd(before?.name ?? '') : (s.steps[j - 1]?.title ?? '')
+        const data = reachedAt === undefined ? say.notReached : `${clock(reachedAt)}${ms === undefined ? '' : ` · ${elapsed(ms)}`}`
         hits += `<rect class="h${k}" x="${(x - 6).toFixed(1)}" width="12" height="${H}" fill="#000" fill-opacity="0"/>`
         tips += tip(String(k), x, label, data, W, H)
         rules.push(`.h${k}:hover~.p${k}`)
@@ -630,7 +692,7 @@ function drawTrack(p: Plan, W: number, traffic: number): Row {
 
   // the thumb: stage and step while it runs, a mark and the stage while it waits or failed, the total time once done
   const glyph = done ? '✓' : p.state === 'needs_input' ? '?' : p.state === 'error' ? '!' : ''
-  const name = done ? (p.endedAt ? elapsed(p.endedAt - p.startedAt) : '完成') : (p.stages[w.stage]?.name ?? '')
+  const name = done ? (p.endedAt ? elapsed(p.endedAt - p.startedAt) : say.state.done) : (p.stages[w.stage]?.name ?? '')
   const count = done ? '' : `${w.step}/${w.stageSize}`
   const isKnob = W < NARROW
   const glyphW = glyph ? 12 : 0
@@ -657,8 +719,12 @@ function drawTrack(p: Plan, W: number, traffic: number): Row {
         `<g class="kv"><rect x="${-kw / 2}" y="${cy - 10}" width="${kw}" height="20" rx="10" fill="#fff"/>${liveClock(-CLOCK_W / 2, cy - 8, p.startedAt, 'kc', 'ck', true)}</g></g>`
 
   const defs = `<defs>${tube.defs}<filter id="ts" x="-30%" y="-50%" width="160%" height="220%"><feDropShadow dx="0" dy="1" stdDeviation="1.4" flood-color="#000" flood-opacity=".28"/></filter></defs>`
+  // past the alert line an open bar flashes: a red ring and wash pulse over the pipe, under the marks and thumb
+  const alert = isAlert && !done
+    ? `<rect class="qa" x=".75" y="${(H - TRACK_H) / 2 - 2}" width="${W - 1.5}" height="${TRACK_H + 4}" rx="${(TRACK_H + 4) / 2}" fill="${TONE.error.mid}" fill-opacity=".22" stroke="${TONE.error.mid}" stroke-width="1.5"/>`
+    : ''
   const open = svgOpen(W, H)
-  const base = `${open}${CSS}${defs}${tube.body}${marks}${thumb}</svg>`
+  const base = `${open}${CSS}${defs}${tube.body}${alert}${marks}${thumb}</svg>`
   const overlay =
     `${open}${SEE_THROUGH}${HOVER_CSS}${rules.length ? `<style>${rules.join(',')}{opacity:1;transform:none}</style>` : ''}` +
     `${hits}<g transform="translate(${kx.toFixed(1)} 0)">${face}</g>${tips}</svg>`
@@ -669,8 +735,8 @@ function drawTrack(p: Plan, W: number, traffic: number): Row {
 const rowAlt = (p: Plan) => {
   const w = where(p)
   return p.state === 'done'
-    ? `${p.title}：完成，共 ${w.total} 步${p.endedAt ? `，用时 ${elapsed(p.endedAt - p.startedAt)}` : ''}`
-    : `${p.title}：${STATE_NAME[p.state]}，${p.stages[w.stage]?.name ?? ''} ${w.step}/${w.stageSize}，${percentOf(p)}%${p.note ? `，${p.note}` : ''}`
+    ? say.rowDone(p.title, w.total, p.endedAt ? elapsed(p.endedAt - p.startedAt) : '')
+    : say.rowOpen(p.title, say.state[p.state], `${p.stages[w.stage]?.name ?? ''} ${w.step}/${w.stageSize}`, percentOf(p), p.note ?? '')
 }
 
 // ---------- agents ----------
@@ -731,7 +797,6 @@ function barText(p: Plan, W: number): { done: string; rest: string } {
 
 // rate limits are per account, so the newest reading any session took is shared through $.store
 const LIMITS_KEY = 'limits'
-const LIMIT_LABEL: Record<string, string> = { five_hour: '5小时', seven_day: '每周', spend_limit: '额度' }
 const HOUR_MS = 3_600_000
 const WEEK_MS = 7 * 24 * HOUR_MS
 const WINDOW_MS: Record<string, number> = { five_hour: 5 * HOUR_MS, seven_day: WEEK_MS }
@@ -763,7 +828,7 @@ const untilReset = (ms: number) => {
 type Meter = { key: string; label: string; used: number | null; resetIn: string | null; resetAt: string | null; elapsed: number | null }
 
 function metersOf(u: Usage, now: number): Meter[] {
-  const out: Meter[] = [{ key: 'context', label: '上下文', used: u.contextPercent, resetIn: null, resetAt: null, elapsed: null }]
+  const out: Meter[] = [{ key: 'context', label: say.meter.context ?? '', used: u.contextPercent, resetIn: null, resetAt: null, elapsed: null }]
   for (const l of u.limits) {
     const resets = l.resetsAt ? Date.parse(l.resetsAt) : NaN
     // a window that has reset since the reading starts again from zero
@@ -772,7 +837,7 @@ function metersOf(u: Usage, now: number): Meter[] {
     const windowMs = WINDOW_MS[l.kind]
     out.push({
       key: l.kind,
-      label: LIMIT_LABEL[l.kind] ?? l.kind,
+      label: say.meter[l.kind] ?? l.kind,
       used: isReset ? 0 : l.percentUsed,
       resetIn: isKnown ? untilReset(resets - now) : null,
       resetAt: isKnown && l.kind === 'five_hour' ? clock(resets).slice(0, 5) : null,
@@ -792,6 +857,18 @@ function meterSvg(m: Meter): string {
   const tube = pipe('m', METER_W, METER_H, (METER_SVG_H - METER_H) / 2, fill, from, TONE[levelOf(used)], used >= 90 ? 'breathe' : 'calm', seedOf(m.key), FINE)
   const tick = m.elapsed === null ? '' : `<rect x="${Math.min(METER_W - 1.5, Math.max(0, m.elapsed * METER_W - 0.75)).toFixed(1)}" y="1" width="1.5" height="${METER_SVG_H - 2}" rx=".75" fill="${PACE}"/>`
   return `${svgOpen(METER_W, METER_SVG_H)}${CSS}<defs>${tube.defs}</defs>${tube.body}${tick}</svg>`
+}
+
+// the quota alert by the 5-hour meter: its words in a red pill that blinks by itself, so nothing redraws for it;
+// a mid red reads on either theme
+const ALERT_H = 18
+const alertW = (words: string) => Math.ceil(textWidth(words, 11.5)) + 22
+function alertSvg(words: string): string {
+  const W = alertW(words)
+  return (
+    `${svgOpen(W, ALERT_H)}${CSS}<g class="qa"><rect x=".75" y=".75" width="${W - 1.5}" height="${ALERT_H - 1.5}" rx="${(ALERT_H - 1.5) / 2}" fill="${TONE.error.mid}" fill-opacity=".14" stroke="${TONE.error.mid}" stroke-width="1.5"/>` +
+    `<text x="${W / 2}" y="${ALERT_H / 2 + 4}" text-anchor="middle" class="qt">${esc(words)}</text></g></svg>`
+  )
 }
 
 async function refreshLimits($: EngineInterface) {
@@ -1018,20 +1095,18 @@ const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 // prompts the person typed (terminal, phone, desktop app): answering one clears "needs input"
 const PERSON = new Set(['composer', 'bridge', 'sdk'])
 // a tool as the strip names it: an MCP tool by its own name, the question tool by what it means for the person
-const toolLabel = (tool: string) => (tool === 'AskUserQuestion' ? '等你回答' : tool.startsWith('mcp__') ? tool.slice(tool.lastIndexOf('__') + 2) : tool)
+const toolLabel = (tool: string) => (tool === 'AskUserQuestion' ? say.asking : tool.startsWith('mcp__') ? tool.slice(tool.lastIndexOf('__') + 2) : tool)
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  say = options.language === 'en' ? EN : ZH
   // per-turn bookkeeping; module variables are fine here, a reload just starts a fresh count
   let workCalls = 0
   // tool calls of the main conversation still running, for the strip's activity
   let mainTools = 0
   let isPlanTouched = false
-  // the 5-hour window (by its reset) already told to wrap up, and whether this turn was told
-  let quotaWarned = ''
-  let isQuotaStop = false
   let isWaitingOnBackground = false
-  // where the band was drawn last, so the terminal alone gets a second-by-second redraw
-  let band: { surface: string; isWorking: boolean } | null = null
+  // where the band was drawn last, so the terminal alone gets a second-by-second redraw (its clocks, its alert blink)
+  let band: { surface: string; isWorking: boolean; isAlert: boolean } | null = null
   // session.start fires again on an enable or a worker respawn, which may keep this module's variables
   let timers: { cancel: () => void }[] = []
 
@@ -1089,7 +1164,7 @@ export const register: Register = on => {
       // the desktop's clocks and effects move inside its drawings; the terminal draws times as text
       $.clock.every(1000, async () => {
         if (band?.surface !== 'terminal') return
-        if (band.isWorking || (await read($, plans)).some(p => (p.agents ?? []).some(isLive))) $.ui.invalidate('ui.render')
+        if (band.isWorking || band.isAlert || (await read($, plans)).some(p => (p.agents ?? []).some(isLive))) $.ui.invalidate('ui.render')
       }),
     ]
 
@@ -1131,7 +1206,6 @@ export const register: Register = on => {
     workCalls = 0
     isPlanTouched = false
     isWaitingOnBackground = false
-    isQuotaStop = false
     mainTools = 0
     await update($, activity, a => ({ ...a, state: 'thinking' as const, tool: null }))
 
@@ -1184,27 +1258,11 @@ export const register: Register = on => {
     if ((await read($, activity)).state === 'idle') return next(e)
     mainTools += 1
     await update($, activity, a => ({ ...a, state: 'tool' as const, tool: toolLabel(e.tool) }))
-    let ran
     try {
-      ran = await next(e)
+      return await next(e)
     } finally {
       mainTools = Math.max(0, mainTools - 1)
       if (mainTools === 0) await update($, activity, a => (a.state === 'tool' ? { ...a, state: 'thinking' as const, tool: null } : a))
-    }
-    // past the person's stop line, the result tells Claude to wrap up at a clean point and wait for them; once
-    // per window, so their next instruction carries on undisturbed
-    const five = (await read($, usage)).limits.find(l => l.kind === 'five_hour')
-    const isOpenWindow = !five?.resetsAt || Date.parse(five.resetsAt) > (await $.clock.now())
-    if (!five || five.percentUsed < QUOTA_STOP || !isOpenWindow || quotaWarned === (five.resetsAt ?? 'open') || ran.deny !== undefined || ran.isError) return ran
-    quotaWarned = five.resetsAt ?? 'open'
-    isQuotaStop = true
-
-    return {
-      ...ran,
-      context: [
-        ...(ran.context ?? []),
-        `progress-band: the 5-hour usage limit is at ${Math.round(five.percentUsed)}%, past the user's stop line of ${QUOTA_STOP}%. Finish the current step at a clean point, say briefly what is done and what is left, then stop and wait for the user's next instruction.`,
-      ],
     }
   })
 
@@ -1246,12 +1304,6 @@ export const register: Register = on => {
     const open = (await read($, plans)).filter(isOpenPlan)
     const last = focusOf(open)
     if (!last) return result
-    // stopped at the person's 5-hour line: the bar waits for them, saying why
-    if (isQuotaStop) {
-      isQuotaStop = false
-      await editBars($, all => all.map(p => (p.id === last.id ? { ...p, state: 'needs_input' as const, note: `5小时额度已过 ${QUOTA_STOP}%，等你的下一个指令` } : p)))
-      return result
-    }
     if (/[?？]\s*$/.test(e.last_assistant_message ?? '')) {
       await editBars($, all => all.map(p => (p.id === last.id ? { ...p, state: 'needs_input' as const } : p)))
       return result
@@ -1278,7 +1330,7 @@ export const register: Register = on => {
       id,
       title: str(e.description || e.subagentType, 60),
       state: 'running',
-      tool: '启动中',
+      tool: say.starting,
       model: started.model,
       startedAt,
       endedAt: null,
@@ -1300,7 +1352,7 @@ export const register: Register = on => {
       $.clock.after(600, async () => {
         if (toolUses.get(useId) !== agentId) return
         waiting.add(agentId)
-        await editAgent($, agentId, a => ({ ...a, state: 'waiting', tool: '待批准' }))
+        await editAgent($, agentId, a => ({ ...a, state: 'waiting', tool: say.approval }))
       })
     }
 
@@ -1329,7 +1381,7 @@ export const register: Register = on => {
     const now = await $.clock.now()
     if (agentId && agentHome.has(agentId)) {
       const isFailed = e.reason !== 'answer'
-      const tool = e.reason === 'aborted' ? '已停止' : isFailed ? '失败' : '完成'
+      const tool = e.reason === 'aborted' ? say.stopped : isFailed ? say.failed : say.state.done
       await editAgent($, agentId, a => ({ ...a, state: isFailed ? 'error' : 'done', tool, endedAt: now }))
       agentHome.delete(agentId)
       waiting.delete(agentId)
@@ -1357,9 +1409,12 @@ export const register: Register = on => {
     const u = await read($, usage)
     const all = await read($, plans)
     const now = await $.clock.now()
-    band = { surface: e.surface, isWorking: e.props.isWorking }
     const cols = Math.max(30, e.props.bodyColumns || 100)
     const meters = metersOf(u, now)
+    // past the alert line (a window that has reset reads 0 here); the terminal blinks by redrawing each second
+    const isAlert = meters.some(m => m.key === 'five_hour' && (m.used ?? 0) >= QUOTA_ALERT)
+    const isBlinkOn = Math.floor(now / 1000) % 2 === 0
+    band = { surface: e.surface, isWorking: e.props.isWorking, isAlert }
     const tokens = u.tokens && tokenSum(u.tokens) > 0 ? u.tokens : null
     const budget = childBudget(all.length)
     // drawing memory of bars no longer listed (closed, or pushed out past MAX_BARS) goes
@@ -1370,7 +1425,7 @@ export const register: Register = on => {
     const act = await read($, activity)
     const ses = await read($, session)
     const isBusy = e.props.isWorking || act.state !== 'idle'
-    const doing = act.state === 'tool' ? (act.tool ?? '工具') : isBusy ? '思考中' : '空闲'
+    const doing = act.state === 'tool' ? (act.tool ?? say.tool) : isBusy ? say.thinking : say.idle
 
     // this session's tokens and the week's in one item after the weekly meter; on the desktop a small Sankey
     // leads it and hovering opens the full one. The app draws that card in its own theme, so the card forces
@@ -1382,8 +1437,8 @@ export const register: Register = on => {
           <Text dimColor>{`${Svg ? '' : '· '}${compact(Math.min(ses.tokens, tokenSum(tokens)))} / ${compact(tokenSum(tokens))} tokens`}</Text>
           {Svg ? (
             <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} flexDirection="column" paddingX={1}>
-              <Text bold>本会话 / 本周 token · 本机会话</Text>
-              <Svg source={sankeySvg(tokens, ses.tokens, isBusy, true)} alt={sankeyAlt(tokens, ses.tokens)} width={SANKEY_W} height={SANKEY_H} />
+              <Text bold>{say.tokensCard}</Text>
+              <Svg source={sankeySvg(tokens, ses.tokens, isBusy, true)} alt={sankeyAlt(tokens, ses.tokens)} width={say.sankeyW} height={SANKEY_H} />
             </Box>
           ) : null}
         </Box>
@@ -1420,6 +1475,11 @@ export const register: Register = on => {
                   {meterValue(m)}
                 </Text>
                 {m.resetIn ? <Text dimColor>{`↻ ${m.resetIn}${m.resetAt ? ` · ${m.resetAt}` : ''}`}</Text> : null}
+                {m.key === 'five_hour' && isAlert ? (
+                  <Box key="quota">
+                    <Svg source={alertSvg(say.quota)} alt={say.quota} width={alertW(say.quota)} height={ALERT_H} />
+                  </Box>
+                ) : null}
                 {m.key === 'seven_day' ? tokenNode() : null}
               </Box>
             )
@@ -1430,7 +1490,7 @@ export const register: Register = on => {
       const focus = focusOf(all)?.id
       bars = all.map(p => {
         const traffic = (e.props.isWorking && p.id === focus ? 1 : 0) + (p.agents ?? []).filter(isLive).length
-        const track = trackSvg(p, trackW, traffic)
+        const track = trackSvg(p, trackW, traffic, isAlert)
         const v = visibleAgents(p, Math.max(1, budget - (p.note && p.state !== 'running' ? 1 : 0)))
         const rows: RenderChildren[] = []
         const hidden = v?.hidden ?? []
@@ -1456,7 +1516,7 @@ export const register: Register = on => {
           rows.push(
             <Box key={`agent-${a.id}`} flexDirection="row" alignItems="center" gap={1} marginLeft={1}>
               {branch(n === total)}
-              <Svg source={stateIcon(state)} alt={STATE_NAME[state]} width={ICON} height={ICON} />
+              <Svg source={stateIcon(state)} alt={say.state[state]} width={ICON} height={ICON} />
               <Text wrap="truncate" dimColor={a.state === 'done'}>
                 {a.title}
               </Text>
@@ -1464,7 +1524,7 @@ export const register: Register = on => {
               <Box flexGrow={1} />
               {isLive(a) ? <Text color={STATE_COLOR[state]}>{a.tool}</Text> : null}
               {a.endedAt === null ? (
-                <Svg source={liveSource(`${p.id}/${a.id}`, agentClock(a.startedAt), now)} alt={`已运行 ${elapsed(now - a.startedAt)}`} width={CLOCK_W} height={REEL} />
+                <Svg source={liveSource(`${p.id}/${a.id}`, agentClock(a.startedAt), now)} alt={say.ran(elapsed(now - a.startedAt))} width={CLOCK_W} height={REEL} />
               ) : (
                 <Text dimColor>{elapsed(a.endedAt - a.startedAt)}</Text>
               )}
@@ -1475,7 +1535,7 @@ export const register: Register = on => {
           rows.push(
             <Box key={`more-${p.id}`} flexDirection="row" gap={1} marginLeft={1}>
               {branch(true)}
-              <Text dimColor>{`还有 ${hidden.length} 个子代理 · ${hidden.filter(a => a.state === 'done').length} 个已完成`}</Text>
+              <Text dimColor>{say.more(hidden.length, hidden.filter(a => a.state === 'done').length)}</Text>
             </Box>,
           )
         }
@@ -1483,7 +1543,7 @@ export const register: Register = on => {
         return (
           <Box key={`bar-${p.id}`} flexDirection="column">
             <Box flexDirection="row" alignItems="center" gap={1}>
-              <Svg source={stateIcon(p.state, traffic > 0)} alt={STATE_NAME[p.state]} width={ICON} height={ICON} />
+              <Svg source={stateIcon(p.state, traffic > 0)} alt={say.state[p.state]} width={ICON} height={ICON} />
               <Text wrap="truncate" dimColor={p.state === 'done'}>
                 {p.title}
               </Text>
@@ -1492,7 +1552,7 @@ export const register: Register = on => {
                 <Svg source={track.base} alt={rowAlt(p)} width={trackW} height={ROW_H} />
                 <Box position="absolute" top={0} left={0}>
                   {/* the hover layer is rebuilt on every redraw anyway, so its clock is set from now each time */}
-                  <Svg source={withTime(track.overlay, now)} alt={`${p.title}：悬停查看时间`} width={trackW} height={ROW_H} isInteractive />
+                  <Svg source={withTime(track.overlay, now)} alt={say.hover(p.title)} width={trackW} height={ROW_H} isInteractive />
                 </Box>
               </Box>
               <Text color={p.state === 'done' ? STATE_COLOR.done : undefined} dimColor={p.state !== 'done'}>
@@ -1510,6 +1570,7 @@ export const register: Register = on => {
         meters.reduce((sum, m) => sum + cellsOf(m.label) + 12 + meterValue(m).length + (m.resetIn ? 2 + m.resetIn.length + (m.resetAt ? 8 : 0) : 0), 0) +
         3 * (meters.length - 1) +
         (tokens ? 24 : 0) +
+        (isAlert ? cellsOf(say.quota) + 3 : 0) +
         cellsOf(doing) + 5
       const hasSegments = rowCells <= cols - 2
       meterRow = (
@@ -1533,6 +1594,11 @@ export const register: Register = on => {
                   {meterValue(m)}
                 </Text>
                 {m.resetIn ? <Text dimColor>{`${m.resetIn}${m.resetAt ? ` (${m.resetAt})` : ''}`}</Text> : null}
+                {m.key === 'five_hour' && isAlert ? (
+                  <Box key="quota">
+                    <Text color={STATE_COLOR.error} bold inverse={isBlinkOn}>{` ${say.quota} `}</Text>
+                  </Box>
+                ) : null}
                 {m.key === 'seven_day' ? tokenNode() : null}
               </Box>
             )
@@ -1545,10 +1611,12 @@ export const register: Register = on => {
         const w = where(p)
         const color = STATE_COLOR[p.state]
         const bar = barText(p, trackW)
+        // past the alert line an open bar blinks red, a beat a second
+        const isFlash = isAlert && isBlinkOn && p.state !== 'done'
         // no hover on the terminal: the label carries the stage, the step and the time
         const label =
           p.state === 'done'
-            ? `完成 · ${p.endedAt ? elapsed(p.endedAt - p.startedAt) : ''}`
+            ? `${say.state.done} · ${p.endedAt ? elapsed(p.endedAt - p.startedAt) : ''}`
             : `${p.stages[w.stage]?.name ?? ''} ${w.step}/${w.stageSize} · ${elapsed(now - p.startedAt)}`
         const v = visibleAgents(p, budget)
 
@@ -1560,8 +1628,10 @@ export const register: Register = on => {
                 <Text wrap="truncate">{p.title}</Text>
               </Box>
               <Text>
-                <Text color={color}>{bar.done}</Text>
-                <Text dimColor>{bar.rest}</Text>
+                <Text color={isFlash ? STATE_COLOR.error : color}>{bar.done}</Text>
+                <Text color={isFlash ? STATE_COLOR.error : undefined} dimColor={!isFlash}>
+                  {bar.rest}
+                </Text>
               </Text>
               <Box flexGrow={1}>
                 <Text color={color} wrap="truncate">
@@ -1597,7 +1667,7 @@ export const register: Register = on => {
             })}
             {v && v.hidden.length > 0 ? (
               <Box marginLeft={2}>
-                <Text dimColor>{`└ 还有 ${v.hidden.length} 个子代理 · ${v.hidden.filter(a => a.state === 'done').length} 个已完成`}</Text>
+                <Text dimColor>{`└ ${say.more(v.hidden.length, v.hidden.filter(a => a.state === 'done').length)}`}</Text>
               </Box>
             ) : null}
           </Box>
