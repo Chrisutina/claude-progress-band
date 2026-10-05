@@ -102,7 +102,8 @@ test('the band shows the meters, the bar and its agent on the terminal and the d
   for await (const chunk of step) void chunk
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ ...BAND, surface })
+    // a desktop band wide enough that its meters' row keeps every reset
+    const ui = await $.ui.mount({ ...BAND, surface, props: { ...BAND.props, bodyColumns: surface === 'desktop' ? 160 : BAND.props.bodyColumns } })
     expect(await ui.find({ key: 'bar-ui' })).toBeDefined()
     expect(await ui.find({ key: 'close-ui' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'beneath' })).toBeDefined()
@@ -136,21 +137,23 @@ test('the band shows the meters, the bar and its agent on the terminal and the d
       // an Svg keeps no key in the drawing; the track's alt says what it shows
       const bar = JSON.stringify(await ui.find({ key: 'bar-ui' }))
       expect(bar).toContain('界面：进行中，构建 2/2，50%')
-      // live: its agent runs, so light drifts down the pipe in two layers and the pixels sparkle
-      expect(bar.match(/class=\\"flow\\"/g)).toHaveLength(2)
-      expect(bar).toContain('class=\\"tw')
+      // live: its agent runs, so the aurora streams in its three layers at full speed and the atom's electrons race
+      expect(bar.match(/class=\\"flow\\"/g)).toHaveLength(3)
+      expect(bar).toContain('pau0 14.62s')
+      expect(bar).toContain('animation-duration:0.80s')
     }
     await ui.unmount()
   }
 
-  // the agent ends and no turn runs: the work pauses, yet the bar keeps moving, slower: one drift layer,
-  // a soft twinkle, and its icon's bars sway instead of standing still
+  // the agent ends and no turn runs: the work pauses, yet the bar keeps moving at half speed, and its atom's
+  // electrons circle slowly instead of standing still
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'a1', agentId: 'ag1', reason: 'answer' })
   const idle = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const paused = JSON.stringify(await idle.find({ key: 'bar-ui' }))
-  expect(paused.match(/class=\\"flow\\"/g)).toHaveLength(1)
-  expect(paused).toContain('class=\\"ts')
-  expect(paused).toContain('class=\\"eq e0 slow\\"')
+  expect(paused.match(/class=\\"flow\\"/g)).toHaveLength(3)
+  expect(paused).toContain('pau0 29.23s')
+  expect(paused).toContain('animation-duration:2.29s')
+  expect(paused).not.toContain('animation-duration:0.80s')
 })
 
 test('a resumed session gets its saved bars back, keeps them past the other sessions, and ✕ closes one', async ($, on) => {
@@ -182,7 +185,7 @@ test('a resumed session gets its saved bars back, keeps them past the other sess
   expect(saved.get('plans:one')).toMatchObject([{ id: 'new' }])
 })
 
-test('the strip says what the main conversation does and never freezes: dancing while it works, swaying while idle', async ($, on) => {
+test('the strip says what the main conversation does and never freezes: its atom spins fast while it works, slowly while idle', async ($, on) => {
   mock.clock(on, { now: NOW })
   stubSession(on, new Map())
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
@@ -204,18 +207,54 @@ test('the strip says what the main conversation does and never freezes: dancing 
   }
   const idle = await strip()
   expect(idle.texts).toContain('空闲')
-  expect(idle.pulse).toContain('class=\\"eq e0 slow\\"')
+  expect(idle.pulse).toContain('animation-duration:2.29s')
+  expect(idle.pulse).not.toContain('animation-duration:0.80s')
   await $.turn.start({ text: 'go', turnId: 't1' })
   const thinking = await strip(true)
   expect(thinking.texts).toContain('思考中')
-  expect(thinking.pulse).toContain('class=\\"eq e0\\"')
+  expect(thinking.pulse).toContain('animation-duration:0.80s')
   await $.tool.call({ tool: 'Read', file_path: '/work/a.ts' })
   expect(during).toContain('Read')
   await $.turn.complete({ answer: 'done', durationMs: 83_000, isAborted: false, turnId: 't1', reason: 'answer' })
   expect((await strip()).texts).toContain('空闲')
 })
 
-test('past the 5-hour alert line the open bar flashes and the meters say so, while Claude works on untold', async ($, on) => {
+test('the desktop meters stay on one line: what has no room drops, and a long tool name changes nothing else', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  const hour = Math.floor(NOW / 3_600_000) * 3_600_000
+  stubSession(on, new Map([['tok:one', { [hour]: [1200, 900_000, 2000, 50_000] }]]))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  const row = async (bodyColumns: number) => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, isWorking: true, bodyColumns } })
+    const meters = await ui.find({ key: 'meters' })
+    await ui.unmount()
+    return { wrap: meters?.props.flexWrap, text: meters?.text ?? '' }
+  }
+  let during = { wrap: undefined as unknown, text: '' }
+  on('tool.call', async () => {
+    during = await row(100)
+    return { result: 'ok' }
+  })
+  await $.session.start(START)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  const wide = await row(200)
+  const narrow = await row(100)
+  // room for all of it: both resets, the 5-hour one with its clock time, and the token words
+  expect(wide.wrap).toBe('nowrap')
+  expect(wide.text).toContain(`↻ 2h13m · ${hhmm(RESET_5H)}`)
+  expect(wide.text).toContain('↻ 4d18h')
+  expect(wide.text).toContain('953K / 953K tokens')
+  // a narrow band keeps every meter and drops the resets, never wrapping
+  expect(narrow.wrap).toBe('nowrap')
+  expect(narrow.text).toMatch(/^思考中上下文20%5小时62%每周5%/)
+  expect(narrow.text).not.toContain('↻')
+  // a long tool name is cut to the label's room; the rest of the row stays as it was
+  await $.tool.call({ tool: 'mcp__plugin_semgrep_guardian__get_semgrep_sast_findings' })
+  expect(during.text).toMatch(/^get_semgre.*…上下文/)
+  expect(during.text.slice(during.text.indexOf('上下文'))).toBe(narrow.text.slice(narrow.text.indexOf('上下文')))
+})
+
+test('past the 5-hour alert line the open bar\'s light turns neon red and the meters say so, while Claude works on untold', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   stubSession(on, new Map())
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
@@ -237,9 +276,12 @@ test('past the 5-hour alert line the open bar flashes and the meters say so, whi
     return { alert, bar, finished }
   }
 
+  // the alert: the aurora in neon red, glowing and flickering
+  const isNeon = (bar: string) => bar.includes('class=\\"nx\\"')
+
   await measure(84)
   for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toBe('null')
-  expect((await look('desktop')).bar).not.toContain('class=\\"qa\\"')
+  expect(isNeon((await look('desktop')).bar)).toBe(false)
 
   await measure(85)
   await $.turn.start({ text: 'go', turnId: 't1' })
@@ -248,19 +290,23 @@ test('past the 5-hour alert line the open bar flashes and the meters say so, whi
   expect(ran).toMatchObject({ result: 'ok' })
   expect(JSON.stringify(ran)).not.toContain('progress-band')
   for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toContain('额度超过阈值')
-  // on the desktop both blink by themselves: a red ring over the bar, a red pill by the 5-hour meter
+  // on the desktop the open bar's light turns neon red and keeps streaming, with no flashing ring; the pill by
+  // the 5-hour meter blinks its words; a finished bar stays as it was
   const desk = await look('desktop')
-  expect(desk.bar).toContain('class=\\"qa\\"')
+  expect(isNeon(desk.bar)).toBe(true)
+  expect(desk.bar.match(/class=\\"flow\\"/g)).toHaveLength(3)
+  expect(desk.bar).toContain('#FF2A6D')
+  expect(desk.bar).not.toContain('class=\\"qa\\"')
   expect(desk.alert).toContain('class=\\"qa\\"')
   expect(desk.finished).toBeDefined()
-  expect(desk.finished).not.toContain('class=\\"qa\\"')
+  expect(isNeon(desk.finished)).toBe(false)
   // the turn ends and nothing waits for the person: the bar keeps running
   await $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'ok' })
   expect((await look('desktop')).bar).toContain('任务：进行中')
   // an expired reading must clear the alert even before a new usage measurement arrives
   await clock.advance(resetsAt - NOW)
   for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toBe('null')
-  expect((await look('desktop')).bar).not.toContain('class=\\"qa\\"')
+  expect(isNeon((await look('desktop')).bar)).toBe(false)
 })
 
 test('with language en the band says all of it in English', { options: { language: 'en' } }, async ($, on) => {

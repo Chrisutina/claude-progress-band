@@ -14,7 +14,7 @@ const usage = atom({ plugin: 'progress-band', key: 'usage' } as const, { context
 // the turn took and the model it runs on stay out: the app's turn footer and model picker show them
 const activity = atom({ plugin: 'progress-band', key: 'activity' } as const, { state: 'idle', tool: null })
 const session = atom({ plugin: 'progress-band', key: 'session' } as const, { tokens: 0 })
-// the person's alert line: past this share of the 5-hour window the open bars flash and the meters say so;
+// the person's alert line: past this share of the 5-hour window the open bars' aurora turns neon red and the meters say so;
 // Claude is not told, so the work goes on
 const QUOTA_ALERT = 85
 
@@ -169,7 +169,7 @@ function normalize(input: Raw, prev: Plan | null, now: number, id: string): Plan
     .filter(s => s.steps.length > 0) as PlanStage[]
   const isPartial = sent.length === 0 && prev !== null
   // a resent plan keeps what was finished; short ops sent along with it apply on top
-  const base = isPartial ? prev.stages : pointAt(prev ? carryDone(sent, prev.stages) : sent)
+  const base = isPartial ? prev.stages : pointAt(prev ? carryDone(sent, prev.stages, now) : sent)
   const { stages, missing } = applyOps(base, input, now)
   if (missing.length > 0 && base.length > 0) {
     const titles = stages.flatMap(s => s.steps.map(st => st.title)).join(', ')
@@ -203,8 +203,9 @@ function normalize(input: Raw, prev: Plan | null, now: number, id: string): Plan
   }
 }
 
-// a resent plan keeps what is finished: a step sent as pending under a title that was done stays done
-function carryDone(stages: PlanStage[], before: PlanStage[]): PlanStage[] {
+// a resent plan keeps what is finished: a step sent as pending under a title that was done stays done;
+// a step the bar had open and the plan now sends finished finishes now, as a short op would
+function carryDone(stages: PlanStage[], before: PlanStage[], now: number): PlanStage[] {
   const history = new Map<string, PlanStep[]>()
   for (const st of before.flatMap(s => s.steps)) {
     const key = str(st.title).toLowerCase()
@@ -216,7 +217,8 @@ function carryDone(stages: PlanStage[], before: PlanStage[]): PlanStage[] {
     ...s,
     steps: s.steps.map(st => {
       const was = history.get(str(st.title).toLowerCase())?.shift()
-      return was && isFinished(was.status) && (st.status === 'pending' || st.status === was.status) ? { ...st, status: was.status, doneAt: was.doneAt } : st
+      if (was && isFinished(was.status) && (st.status === 'pending' || st.status === was.status)) return { ...st, status: was.status, doneAt: was.doneAt }
+      return was && !isFinished(was.status) && isFinished(st.status) ? { ...st, doneAt: now } : st
     }),
   }))
 }
@@ -289,16 +291,14 @@ const compact = (n: number): string => {
 }
 
 // ---------- design system ----------
-// Modelled on Claude's own effort slider: a soft grey pipe whose fill is fine pixel squares, thinner and
-// paler at the start, packing denser and deeper towards a white thumb. It moves with the work, live:
-// while Claude's turn runs on a task, or its agents do, slow light drifts through the pixels towards the
-// head, like matter carried down a pipe, more of it the more agents run, and the pixels sparkle hardest
-// at the head; while the work pauses the light keeps drifting at half speed and the pixels twinkle softly,
-// so a pause never looks frozen. A running state's icon is three level bars, dancing while work runs and
-// swaying slowly while it pauses. A wait breathes, an error and a done bar stand still, every change glides in .42 s.
-// Past the quota alert line every open bar flashes a red ring, and a red pill by the 5-hour meter blinks its words. Words
-// are the app's own text, so they follow its light or dark theme; the drawings use mid-tone colours
-// that read on either.
+// The bars are aurora: soft light drifting through the filled part of a grey pipe towards a white thumb, in three
+// layers of puffs, big deep clouds slow, mid ones, thin bright wisps racing ahead. It moves with the work, live: while
+// Claude's turn runs on a task, or its agents do, the light streams, quicker the more agents run; while the work pauses
+// it drifts at half speed, so a pause never looks frozen; a wait breathes, an error freezes and blinks, a done bar
+// drifts slowly; every change glides in .42 s. The state icons are atoms, three electrons on tilted orbits, quick while
+// work runs and slow while it pauses. Past the quota alert line every open bar's light turns neon red, glows and
+// flickers, and a red pill by the 5-hour meter blinks its words. Words are the app's own text, so they follow its
+// light or dark theme; the drawings use mid-tone colours that read on either.
 type Tone = { light: string; mid: string; deep: string }
 const TONE: Record<PlanState, Tone> = {
   running: { light: '#CDBDFB', mid: '#9D84F2', deep: '#6F4FDF' },
@@ -319,33 +319,17 @@ const TRACK_FILL = 'rgba(128,128,128,.16)'
 const TICK = 'rgba(128,128,128,.62)'
 const THUMB_INK = '#3B3A36'
 const THUMB_DIM = '#8C8A84'
-const LEVELS = ['.3', '.48', '.66', '.84', '1'] // pixel opacities, start to head
-// the pixel grid: a task track's squares, and a meter's finer and denser ones
-type Grain = { pitch: number; px: number; floor: number }
-const COARSE: Grain = { pitch: 3, px: 2.4, floor: 0.34 }
-const FINE: Grain = { pitch: 2.5, px: 2, floor: 0.7 }
-// how fast light drifts down a pipe, px a second; the user asked for it slow
-const FLOW_SPEED = 20
-
-// six twinkle phases of different lengths, so the field never pulses in step; tw1 and tw5 are the
-// quick ones the head sparkles with
+// .br a wait's breath, .bk an error's blink, .nx the alert's flicker, .qa the alert pill, .irot an electron's orbit,
+// .ipop a done atom's pop
 const CSS = `<style>
-.tw0,.tw1,.tw2,.tw3,.tw4,.tw5{animation:tw 2.6s ease-in-out infinite}
-.tw1{animation-duration:1.7s;animation-delay:-.7s}.tw2{animation-duration:3.3s;animation-delay:-1.6s}.tw3{animation-duration:2.2s;animation-delay:-1.1s}
-.tw4{animation-duration:4.1s;animation-delay:-2.3s}.tw5{animation-duration:1.4s;animation-delay:-.4s}
-@keyframes tw{0%,100%{opacity:1}50%{opacity:.2}}
-.ts0,.ts1,.ts2,.ts3,.ts4,.ts5{animation:ts 3.6s ease-in-out infinite}
-.ts1{animation-delay:-.6s}.ts2{animation-delay:-1.2s}.ts3{animation-delay:-1.8s}.ts4{animation-delay:-2.4s}.ts5{animation-delay:-3s}
-@keyframes ts{0%,100%{opacity:1}50%{opacity:.35}}
 .br{animation:br 2.4s cubic-bezier(.45,0,.55,1) infinite}@keyframes br{50%{opacity:.45}}
-.eq{transform-box:fill-box;transform-origin:50% 100%;animation:eq .9s ease-in-out infinite alternate}
-.e1{animation-duration:.7s;animation-delay:-.4s}.e2{animation-duration:1.1s;animation-delay:-.25s}
-@keyframes eq{from{transform:scaleY(.28)}to{transform:scaleY(1)}}
-.eq.slow{animation-name:eqs;animation-duration:2.4s}.e1.slow{animation-duration:1.9s}.e2.slow{animation-duration:3s}
-@keyframes eqs{from{transform:scaleY(.45)}to{transform:scaleY(1)}}
+.bk{animation:bk 1.6s ease-in-out infinite}@keyframes bk{50%{opacity:.3}}
+.nx{animation:nx 3.2s linear infinite}@keyframes nx{0%,90%,93%,95%,100%{opacity:1}91.5%{opacity:.4}94%{opacity:.65}}
+.irot{transform-origin:0 0;animation:irot 1s linear infinite}@keyframes irot{to{transform:rotate(360deg)}}
+.ipop{transform-origin:7px 7px;animation:ipop 3.2s ease-in-out infinite}@keyframes ipop{0%,78%,100%{transform:scale(1)}86%{transform:scale(1.14)}}
 .qa{animation:qa 1.2s ease-in-out infinite}@keyframes qa{0%,100%{opacity:1}50%{opacity:.2}}
 .tn{font:600 11.5px ${SANS};fill:${THUMB_INK}}.tc{font:500 10.5px ${MONO};fill:${THUMB_DIM}}.tg{font:700 11.5px ${SANS}}.qt{font:600 11.5px ${SANS};fill:${TONE.error.mid}}
-@media (prefers-reduced-motion:reduce){.tw0,.tw1,.tw2,.tw3,.tw4,.tw5,.ts0,.ts1,.ts2,.ts3,.ts4,.ts5,.br,.qa{animation:none}.flow,.glide,.eq{animation:none!important}}
+@media (prefers-reduced-motion:reduce){.br,.bk,.nx,.qa{animation:none}.flow,.glide,.irot,.ipop{animation:none!important}}
 </style>`
 
 const svgOpen = (W: number, H: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
@@ -375,86 +359,77 @@ const cut = (s: string, room: number, measure: (s: string) => number) => {
   return `${out.join('').trimEnd()}…`
 }
 
-// the pixel field over [0, fill]: squares thin out and pale towards the start, pack in and brighten
-// towards the head; each takes one of six twinkle phases, the quick ones near the head, so the field
-// shimmers like a level meter and sparkles where the work arrives
-function pixels(fill: number, H: number, seed: number, motion: 'tw' | 'ts' | '', grain: Grain): string {
-  const { pitch, px, floor } = grain
-  const rows = Math.max(1, Math.floor(H / pitch))
-  const top = (H - rows * pitch) / 2 + (pitch - px) / 2
-  const groups = new Map<string, string>()
-  for (let col = 0; col * pitch < fill; col++) {
-    const x = col * pitch + (pitch - px) / 2
-    const u = Math.min(1, (x + px) / Math.max(px, fill))
-    for (let r = 0; r < rows; r++) {
-      if (hash(col + seed, r, 1) > floor + (1 - floor) * Math.pow(u, 0.9)) continue
-      const level = Math.min(4, Math.floor(floor * 2 + u * 4.2 + hash(col + seed, r, 3) * 1.4))
-      const roll = hash(col + seed, r, 2)
-      const phase = motion === 'tw' && u > 0.75 ? (roll < 0.5 ? 1 : 5) : motion === 'tw' ? [0, 2, 3, 4][Math.floor(roll * 4)] : Math.floor(roll * 6)
-      const key = `${level}${phase}`
-      groups.set(key, `${groups.get(key) ?? ''}M${x.toFixed(1)} ${(top + r * pitch).toFixed(1)}h${px}v${px}h-${px}z`)
-    }
-  }
-  return [...groups].map(([key, d]) => `<path${motion ? ` class="${motion}${key[1]}"` : ''} fill="#fff" fill-opacity="${LEVELS[Number(key[0])]}" d="${d}"/>`).join('')
-}
+type Motion = 'flow' | 'calm' | 'breathe' | 'still' | 'gas'
 
-type Motion = 'flow' | 'calm' | 'breathe' | 'still'
+// past the alert line the light turns neon red
+const NEON: Tone = { deep: '#C2003D', mid: '#FF2A6D', light: '#FFD1DE' }
+// three layers of soft puffs: big deep clouds drifting slowly, mid ones, and thin bright wisps racing ahead. Each layer
+// is a tile of puffs repeated down the pipe, so it loops seamlessly
+const AURORA = [
+  { tile: 190, speed: 13, puffs: 3, rx: [30, 70], ry: [5, 10], tone: 'deep', alpha: [0.35, 0.9] },
+  { tile: 120, speed: 22, puffs: 4, rx: [14, 34], ry: [3, 6], tone: 'mid', alpha: [0.4, 0.9] },
+  { tile: 76, speed: 36, puffs: 2, rx: [12, 26], ry: [1, 2.4], tone: 'light', alpha: [0.6, 1] },
+] as const
 
-// a pipe of W x H at y: the grey track, then the pixel field over the filled part, coloured from the
-// tone's light end to its deep end over a faint cloud of the same, and crossed by soft light drifting
-// towards the head: while work flows, two layers at different spacings and speeds, so the drift never
-// repeats in step, their packets closer together the more work runs (traffic); while it pauses, one
-// softer layer at half speed. ids are prefixed, so several pipes can share one drawing
-function pipe(id: string, W: number, H: number, y: number, fill: number, from: number, tone: Tone, motion: Motion, seed: number, grain: Grain, traffic = 0): { defs: string; body: string } {
+// a pipe of W x H at y: the grey track, and over its filled part the aurora in the tone, faster with each running
+// agent (traffic), half speed while the work pauses, slow once still; a wait breathes and an error freezes and blinks.
+// Past the alert line (motion 'gas') it is neon red, glows and flickers. ids are prefixed, so several pipes can share
+// one drawing
+function aurora(id: string, W: number, H: number, y: number, fill: number, from: number, tone: Tone, motion: Motion, seed: number, traffic = 0, isError = false): { defs: string; body: string } {
+  const isAlert = motion === 'gas'
+  const t = isAlert ? NEON : tone
   const r = H / 2
+  const f = (n: number) => n.toFixed(1)
+  const lerp = ([a, b]: readonly [number, number], s: number) => a + (b - a) * s
+  // the filled part, growing from where the head was last drawn
   const glide = Math.abs(from - fill) > 0.5
-  const glideStyle = glide ? `<style>@keyframes ${id}grow{from{width:${from.toFixed(1)}px}to{width:${fill.toFixed(1)}px}}</style>` : ''
-  // the spacing of the light packets; a short pipe (a meter) packs them closer so one is always in view
-  const P = Math.min(W * 0.6, traffic >= 3 ? 60 : traffic === 2 ? 80 : 110)
-  // each layer moves by exactly one spacing and starts over, so the loop is seamless; its keyframes carry
-  // the distance literally, since a var() inside @keyframes does not animate in older WebKit (the mobile app)
-  const drift = (spacing: number, speed: number, opacity: number) => {
-    const name = `fl${Math.round(spacing)}`
-    return (
-      `<style>@keyframes ${name}{to{transform:translateX(${spacing.toFixed(1)}px)}}</style>` +
-      `<g class="flow" style="animation:${name} ${(spacing / speed).toFixed(2)}s linear infinite" opacity="${opacity}">${Array.from(
-        { length: Math.ceil(fill / spacing) + 2 },
-        (_, k) => `<ellipse cx="${((k - 1) * spacing + spacing / 2).toFixed(1)}" cy="${H / 2}" rx="${(spacing * 0.36).toFixed(1)}" ry="${H}" fill="url(#${id}f)"/>`,
-      ).join('')}</g>`
-    )
-  }
-  const fog = motion === 'flow' ? drift(P, FLOW_SPEED, 0.9) + drift(P * 1.7, FLOW_SPEED * 0.6, 0.45) : motion === 'calm' ? drift(P, FLOW_SPEED * 0.5, 0.55) : ''
+  const clip =
+    (glide ? `<style>@keyframes ${id}grow{from{width:${f(from)}px}to{width:${f(fill)}px}}</style>` : '') +
+    `<clipPath id="${id}c"><rect width="${f(fill)}" height="${H}" rx="${r}"${glide ? ` class="glide" style="animation:${id}grow .42s ${EASE} both"` : ''}/></clipPath>`
+  const isLive = motion === 'flow' || (isAlert && traffic > 0)
+  const rate = isError && !isAlert ? 0 : isLive ? 1 + 0.3 * Math.max(0, traffic - 1) : motion === 'calm' || isAlert ? 0.5 : 0.3
+  const layers = AURORA.map((g, i) => {
+    const tile = Array.from({ length: g.puffs }, (_, j) => {
+      const roll = (k: number) => hash(seed + i * 31 + j * 7, k, 5)
+      return { cx: ((j + 0.15 + roll(1) * 0.7) * g.tile) / g.puffs, cy: H / 2 + (roll(2) - 0.5) * H * 0.6, rx: lerp(g.rx, roll(3)), ry: lerp(g.ry, roll(4)), alpha: lerp(g.alpha, roll(5)) }
+    })
+    // tiles from two before the start to past the head, so the loop's shift never shows an edge
+    const puffs = Array.from({ length: Math.ceil(fill / g.tile) + 4 }, (_, k) =>
+      tile.map(p => `<ellipse cx="${f((k - 2) * g.tile + p.cx)}" cy="${f(p.cy)}" rx="${f(p.rx)}" ry="${f(p.ry)}" fill="url(#${id}a${i})" opacity="${p.alpha.toFixed(2)}"/>`).join(''),
+    ).join('')
+    return rate
+      ? `<style>@keyframes ${id}au${i}{to{transform:translateX(${g.tile}px)}}</style><g class="flow" style="animation:${id}au${i} ${(g.tile / (g.speed * rate)).toFixed(2)}s linear infinite">${puffs}</g>`
+      : `<g>${puffs}</g>`
+  }).join('')
   const defs =
-    `${glideStyle}<clipPath id="${id}c"><rect width="${fill.toFixed(1)}" height="${H}" rx="${r}"${glide ? ` class="glide" style="animation:${id}grow .42s ${EASE} both"` : ''}/></clipPath>` +
-    `<mask id="${id}m" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}">${pixels(fill, H, seed, motion === 'flow' ? 'tw' : motion === 'calm' ? 'ts' : '', grain)}</mask>` +
-    `<linearGradient id="${id}g" gradientUnits="userSpaceOnUse" x1="0" x2="${Math.max(fill, 1).toFixed(1)}"><stop offset="0" stop-color="${tone.light}"/><stop offset=".55" stop-color="${tone.mid}"/><stop offset="1" stop-color="${tone.deep}"/></linearGradient>` +
-    (fog ? `<radialGradient id="${id}f"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>` : '')
-  const body =
-    `<g transform="translate(0 ${y})"><rect width="${W}" height="${H}" rx="${r}" fill="${TRACK_FILL}"/>` +
-    `<g clip-path="url(#${id}c)"${motion === 'breathe' ? ' class="br"' : ''}><rect width="${fill.toFixed(1)}" height="${H}" fill="url(#${id}g)" opacity=".16"/>` +
-    `<g mask="url(#${id}m)"><rect width="${fill.toFixed(1)}" height="${H}" fill="url(#${id}g)"/>${fog}</g></g></g>`
+    clip +
+    AURORA.map((g, i) => `<radialGradient id="${id}a${i}"><stop offset="0" stop-color="${t[g.tone]}"/><stop offset=".55" stop-color="${t[g.tone]}" stop-opacity=".5"/><stop offset="1" stop-color="${t[g.tone]}" stop-opacity="0"/></radialGradient>`).join('') +
+    `<filter id="${id}s" x="0" y="-50%" width="100%" height="200%"><feGaussianBlur stdDeviation="1.2"/></filter>` +
+    (isAlert ? `<filter id="${id}n" x="-2%" y="-60%" width="104%" height="220%"><feGaussianBlur stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>` : '')
+  const mood = isError && !isAlert ? ' class="bk"' : motion === 'breathe' ? ' class="br"' : ''
+  const pipe =
+    `<rect width="${W}" height="${H}" rx="${r}" fill="${TRACK_FILL}"/><g clip-path="url(#${id}c)"${mood}>` +
+    `<rect width="${f(fill)}" height="${H}" fill="${t.mid}" opacity=".25"/><g filter="url(#${id}s)">${layers}</g></g>`
+  const body = `<g transform="translate(0 ${y})">${isAlert ? `<g class="nx" filter="url(#${id}n)">${pipe}</g>` : pipe}</g>`
   return { defs, body }
 }
 
-// the state as a 14 px icon: three level bars dancing while it runs, a mark in a dot otherwise
+// the state as a 14 px atom: three electrons on tilted orbits around the nucleus, quick while work runs, slow while it
+// pauses or nothing runs; a wait breathes, an error holds the electrons still and blinks the nucleus, a done atom pops
 const ICON = 14
-const ICON_MARK: Partial<Record<PlanState, string>> = {
-  done: '<path d="M4.2 7.3l1.9 1.9 3.8-4.2" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-  error: '<path d="M7 3.9v3.5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><circle cx="7" cy="10.1" r=".95" fill="#fff"/>',
-  needs_input:
-    '<path d="M5.3 5.5a1.75 1.75 0 1 1 2.5 1.6c-.55.27-.8.65-.8 1.2" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="10.4" r=".9" fill="#fff"/>',
+const ORBIT = 'rgba(128,128,128,.32)'
+type AtomMood = '' | 'wait' | 'error' | 'done'
+function atomIcon(t: Tone, spin: number, mood: AtomMood): string {
+  // an orbit is a circle squashed flat and tilted, so an electron circling inside it travels the ellipse
+  const orbit = (deg: number, n: number) =>
+    `<g transform="translate(7 7) rotate(${deg}) scale(1 .38)"><circle r="5.8" fill="none" stroke="${ORBIT}" stroke-width="1.6"/>` +
+    `<g${mood === 'error' ? '' : ` class="irot" style="animation-duration:${(spin ? (0.8 + n * 0.25) / spin : 3 + n).toFixed(2)}s"`}><circle cx="5.8" r="2" fill="${t.mid}"/></g></g>`
+  const body = `<g${mood === 'wait' ? ' class="br"' : ''}>${orbit(0, 0)}${orbit(60, 1)}${orbit(120, 2)}<circle${mood === 'error' ? ' class="bk"' : ''} cx="7" cy="7" r="1.7" fill="${t.deep}"/></g>`
+  return `${svgOpen(ICON, ICON)}${CSS}${mood === 'done' ? `<g class="ipop">${body}</g>` : body}</svg>`
 }
-// the three level bars: dancing while work runs, swaying slowly while it pauses
-const levelBars = (paint: (i: number) => string, isLive: boolean) =>
-  [0, 1, 2].map(i => `<rect class="eq e${i}${isLive ? '' : ' slow'}" x="${2.2 + i * 3.8}" y="2" width="2.4" height="10" rx="1.2" ${paint(i)}/>`).join('')
-// isLive: something works on it right now; a running bar nobody works on sways slowly, as its pipe drifts slowly
+// isLive: something works on it right now; a running bar nobody works on spins slowly, as its light drifts slowly
 function stateIcon(state: PlanState, isLive = true): string {
-  const t = TONE[state]
-  const body =
-    state === 'running'
-      ? levelBars(i => `fill="${i === 1 ? t.deep : t.mid}"`, isLive)
-      : `<g${state === 'needs_input' ? ' class="br"' : ''}><circle cx="7" cy="7" r="6.2" fill="${t.mid}"/>${ICON_MARK[state] ?? ''}</g>`
-  return `${svgOpen(ICON, ICON)}${CSS}${body}</svg>`
+  return atomIcon(TONE[state], state === 'running' ? (isLive ? 1 : 0.35) : 0, state === 'needs_input' ? 'wait' : state === 'error' ? 'error' : state === 'done' ? 'done' : '')
 }
 
 // a clock that counts by itself, so nothing redraws each second: each digit is a reel of its figures
@@ -505,8 +480,8 @@ function liveSource(id: string, template: string, now: number): string {
   return source
 }
 
-// the session strip's icon while no turn runs: the three bars in grey, swaying slowly
-const IDLE_ICON = `${svgOpen(ICON, ICON)}${CSS}${levelBars(() => 'fill="#8C8A84" fill-opacity=".6"', false)}</svg>`
+// the session strip's icon while no turn runs: the atom in grey, spinning slowly
+const IDLE_ICON = atomIcon({ light: '#B4B2A9', mid: '#8C8A84', deep: '#8C8A84' }, 0.35, '')
 
 // ---------- token sankey ----------
 // the week's tokens as a small Sankey of blocks: the four kinds flow into the week's total, which splits into
@@ -655,9 +630,10 @@ function drawTrack(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
   const fill = (done ? 1 : Math.min(1, w.pos / Math.max(1, w.total))) * W
   const from = lastHead.get(p.id) ?? fill
   lastHead.set(p.id, fill)
-  // live: it flows while something works on it, and drifts at half speed while the work pauses
-  const motion: Motion = p.state === 'running' ? (traffic > 0 ? 'flow' : 'calm') : p.state === 'needs_input' ? 'breathe' : 'still'
-  const tube = pipe('p', W, TRACK_H, (H - TRACK_H) / 2, fill, from, tone, motion, seedOf(p.id), COARSE, traffic)
+  // live: it streams while something works on it, and drifts at half speed while the work pauses;
+  // past the alert line an open bar's light turns neon red
+  const motion: Motion = isAlert && !done ? 'gas' : p.state === 'running' ? (traffic > 0 ? 'flow' : 'calm') : p.state === 'needs_input' ? 'breathe' : 'still'
+  const tube = aurora('p', W, TRACK_H, (H - TRACK_H) / 2, fill, from, tone, motion, seedOf(p.id), traffic, p.state === 'error')
 
   // checkpoints, and their hover chips: the name, when it was reached and how long it took
   const took = stepTimes(p)
@@ -671,17 +647,19 @@ function drawTrack(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
       if (k > 0) {
         const x = (k / w.total) * W
         const isStage = j === 0
-        const paint = x <= fill + 0.5 ? 'fill="#fff" fill-opacity=".92"' : `fill="${TICK}"`
+        const before = p.stages[i - 1]
+        const ended = isStage ? (before?.steps ?? []) : [s.steps[j - 1]]
+        // reached once every step ending here is finished; one sent in already finished has no time
+        const isReached = ended.length > 0 && ended.every(st => st !== undefined && isFinished(st.status))
+        const doneAts = ended.map(st => st?.doneAt)
+        const reachedAt = isReached && doneAts.every(t => t !== undefined) ? Math.max(...(doneAts as number[])) : undefined
+        const paint = isReached ? 'fill="#fff" fill-opacity=".92"' : `fill="${TICK}"`
         marks += isStage
           ? `<rect x="${(x - 1).toFixed(1)}" y="${cy - 5}" width="2" height="10" rx="1" ${paint}/>`
           : `<circle cx="${x.toFixed(1)}" cy="${cy}" r="1.5" ${paint}/>`
-        const before = p.stages[i - 1]
-        const ended = isStage ? (before?.steps ?? []) : [s.steps[j - 1]]
-        const doneAts = ended.map(st => st?.doneAt)
-        const reachedAt = doneAts.length > 0 && doneAts.every(t => t !== undefined) ? Math.max(...(doneAts as number[])) : undefined
         const ms = isStage ? took.stages[i - 1] : took.steps.get(s.steps[j - 1] as PlanStep)
         const label = isStage ? say.stageEnd(before?.name ?? '') : (s.steps[j - 1]?.title ?? '')
-        const data = reachedAt === undefined ? say.notReached : `${clock(reachedAt)}${ms === undefined ? '' : ` · ${elapsed(ms)}`}`
+        const data = !isReached ? say.notReached : reachedAt === undefined ? say.state.done : `${clock(reachedAt)}${ms === undefined ? '' : ` · ${elapsed(ms)}`}`
         hits += `<rect class="h${k}" x="${(x - 6).toFixed(1)}" width="12" height="${H}" fill="#000" fill-opacity="0"/>`
         tips += tip(String(k), x, label, data, W, H)
         rules.push(`.h${k}:hover~.p${k}`)
@@ -719,12 +697,8 @@ function drawTrack(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
         `<g class="kv"><rect x="${-kw / 2}" y="${cy - 10}" width="${kw}" height="20" rx="10" fill="#fff"/>${liveClock(-CLOCK_W / 2, cy - 8, p.startedAt, 'kc', 'ck', true)}</g></g>`
 
   const defs = `<defs>${tube.defs}<filter id="ts" x="-30%" y="-50%" width="160%" height="220%"><feDropShadow dx="0" dy="1" stdDeviation="1.4" flood-color="#000" flood-opacity=".28"/></filter></defs>`
-  // past the alert line an open bar flashes: a red ring and wash pulse over the pipe, under the marks and thumb
-  const alert = isAlert && !done
-    ? `<rect class="qa" x=".75" y="${(H - TRACK_H) / 2 - 2}" width="${W - 1.5}" height="${TRACK_H + 4}" rx="${(TRACK_H + 4) / 2}" fill="${TONE.error.mid}" fill-opacity=".22" stroke="${TONE.error.mid}" stroke-width="1.5"/>`
-    : ''
   const open = svgOpen(W, H)
-  const base = `${open}${CSS}${defs}${tube.body}${alert}${marks}${thumb}</svg>`
+  const base = `${open}${CSS}${defs}${tube.body}${marks}${thumb}</svg>`
   const overlay =
     `${open}${SEE_THROUGH}${HOVER_CSS}${rules.length ? `<style>${rules.join(',')}{opacity:1;transform:none}</style>` : ''}` +
     `${hits}<g transform="translate(${kx.toFixed(1)} 0)">${face}</g>${tips}</svg>`
@@ -854,7 +828,7 @@ function meterSvg(m: Meter): string {
   const fill = (used / 100) * METER_W
   const from = lastMeter.get(m.key) ?? fill
   lastMeter.set(m.key, fill)
-  const tube = pipe('m', METER_W, METER_H, (METER_SVG_H - METER_H) / 2, fill, from, TONE[levelOf(used)], used >= 90 ? 'breathe' : 'calm', seedOf(m.key), FINE)
+  const tube = aurora('m', METER_W, METER_H, (METER_SVG_H - METER_H) / 2, fill, from, TONE[levelOf(used)], used >= 90 ? 'breathe' : 'calm', seedOf(m.key))
   const tick = m.elapsed === null ? '' : `<rect x="${Math.min(METER_W - 1.5, Math.max(0, m.elapsed * METER_W - 0.75)).toFixed(1)}" y="1" width="1.5" height="${METER_SVG_H - 2}" rx=".75" fill="${PACE}"/>`
   return `${svgOpen(METER_W, METER_SVG_H)}${CSS}<defs>${tube.defs}</defs>${tube.body}${tick}</svg>`
 }
@@ -869,6 +843,27 @@ function alertSvg(words: string): string {
     `${svgOpen(W, ALERT_H)}${CSS}<g class="qa"><rect x=".75" y=".75" width="${W - 1.5}" height="${ALERT_H - 1.5}" rx="${(ALERT_H - 1.5) / 2}" fill="${TONE.error.mid}" fill-opacity=".14" stroke="${TONE.error.mid}" stroke-width="1.5"/>` +
     `<text x="${W / 2}" y="${ALERT_H / 2 + 4}" text-anchor="middle" class="qt">${esc(words)}</text></g></svg>`
   )
+}
+
+// the desktop's meters row stays on one line: what the band has no room for drops, least needed first: the 5-hour
+// reset's clock time (1), the weekly reset (2), the 5-hour reset (3), the token words, their Sankey staying (4).
+// Widths are estimated as the desktop draws them, ~8 px a cell and text at ~14 px. The activity label is cut to a
+// fixed room, so a long tool name neither moves this choice nor pushes the row onto a second line
+const DOING_PX = 88
+const resetWords = (m: Meter, drop: number) =>
+  m.resetIn && drop < (m.key === 'five_hour' ? 3 : 2) ? `↻ ${m.resetIn}${m.resetAt && drop < 1 ? ` · ${m.resetAt}` : ''}` : ''
+function meterDrop(meters: Meter[], tokenWords: string, isAlert: boolean, cols: number): number {
+  const px = (s: string) => textWidth(s, 14)
+  const width = (drop: number) =>
+    meters.reduce((w, m) => {
+      const reset = resetWords(m, drop)
+      return (
+        w + 24 + px(m.label) + 8 + METER_W + 8 + px(meterValue(m)) * 1.1 + (reset ? 8 + px(reset) : 0) +
+        (m.key === 'five_hour' && isAlert ? 8 + alertW(say.quota) : 0) +
+        (m.key === 'seven_day' && tokenWords ? 8 + SANKEY_ICON_W + (drop < 4 ? 8 + px(tokenWords) : 0) : 0)
+      )
+    }, ICON + 8 + DOING_PX)
+  return [0, 1, 2, 3].find(drop => width(drop) <= cols * 8 - 24) ?? 4
 }
 
 async function refreshLimits($: EngineInterface) {
@@ -1212,13 +1207,13 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // the person answering clears any "needs input"; open bars ride along as one short line, so the model
-  // keeps their ids past a compaction
+  // the person writing again starts a new question: the bars finished for the last one go, and any "needs input"
+  // is answered; open bars ride along as one short line, so the model keeps their ids past a compaction
   on('prompt.submit', async ($, e, next) => {
     if (!PERSON.has(e.origin.kind)) return next(e)
     const all = await read($, plans)
-    if (all.some(p => p.state === 'needs_input')) {
-      await editBars($, bars => bars.map(p => (p.state === 'needs_input' ? { ...p, state: 'running' as const, note: null } : p)))
+    if (all.some(p => p.state === 'done' || p.state === 'needs_input')) {
+      await editBars($, bars => bars.filter(p => p.state !== 'done').map(p => (p.state === 'needs_input' ? { ...p, state: 'running' as const, note: null } : p)))
     }
     const open = all.filter(p => p.state !== 'done')
     if (open.length === 0) return next(e)
@@ -1430,11 +1425,12 @@ export const register: Register = (on, options) => {
     // this session's tokens and the week's in one item after the weekly meter; on the desktop a small Sankey
     // leads it and hovering opens the full one. The app draws that card in its own theme, so the card forces
     // no colour: forced light text was unreadable on its light card
-    const tokenNode = () =>
+    const tokenWords = tokens ? `${compact(Math.min(ses.tokens, tokenSum(tokens)))} / ${compact(tokenSum(tokens))} tokens` : ''
+    const tokenNode = (hasWords = true) =>
       tokens ? (
         <Box key="tokens" flexDirection="row" columnGap={1} alignItems="center">
           {Svg ? <Svg source={sankeySvg(tokens, ses.tokens, isBusy, false)} alt={sankeyAlt(tokens, ses.tokens)} width={SANKEY_ICON_W} height={SANKEY_ICON_H} /> : null}
-          <Text dimColor>{`${Svg ? '' : '· '}${compact(Math.min(ses.tokens, tokenSum(tokens)))} / ${compact(tokenSum(tokens))} tokens`}</Text>
+          {hasWords ? <Text dimColor>{`${Svg ? '' : '· '}${tokenWords}`}</Text> : null}
           {Svg ? (
             <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} flexDirection="column" paddingX={1}>
               <Text bold>{say.tokensCard}</Text>
@@ -1457,16 +1453,19 @@ export const register: Register = (on, options) => {
       const total = Math.max(320, cols * 8)
       const titlePx = Math.min(Math.round(total * 0.3), Math.max(48, ...all.map(p => Math.round(textWidth(p.title, 14)))))
       const trackW = Math.max(120, Math.min(1400, total - titlePx - 144))
+      // one line whatever runs: see meterDrop
+      const drop = meterDrop(meters, tokenWords, isAlert, cols)
       meterRow = (
-        <Box key="meters" flexDirection="row" columnGap={3} alignItems="center" flexWrap="wrap">
+        <Box key="meters" flexDirection="row" columnGap={3} alignItems="center" flexWrap="nowrap">
           <Box key="doing" flexDirection="row" columnGap={1} alignItems="center">
             <Svg source={isBusy ? stateIcon('running', true) : IDLE_ICON} alt={doing} width={ICON} height={ICON} />
             <Text color={isBusy ? STATE_COLOR.running : undefined} dimColor={!isBusy}>
-              {doing}
+              {cut(doing, DOING_PX, s => textWidth(s, 14))}
             </Text>
           </Box>
           {meters.map(m => {
             const color = m.used === null ? undefined : STATE_COLOR[levelOf(m.used)]
+            const reset = resetWords(m, drop)
             return (
               <Box key={`meter-${m.key}`} flexDirection="row" columnGap={1} alignItems="center">
                 <Text dimColor>{m.label}</Text>
@@ -1474,13 +1473,13 @@ export const register: Register = (on, options) => {
                 <Text color={color} dimColor={color === undefined} bold>
                   {meterValue(m)}
                 </Text>
-                {m.resetIn ? <Text dimColor>{`↻ ${m.resetIn}${m.resetAt ? ` · ${m.resetAt}` : ''}`}</Text> : null}
+                {reset ? <Text dimColor>{reset}</Text> : null}
                 {m.key === 'five_hour' && isAlert ? (
                   <Box key="quota">
                     <Svg source={alertSvg(say.quota)} alt={say.quota} width={alertW(say.quota)} height={ALERT_H} />
                   </Box>
                 ) : null}
-                {m.key === 'seven_day' ? tokenNode() : null}
+                {m.key === 'seven_day' ? tokenNode(drop < 4) : null}
               </Box>
             )
           })}

@@ -1,7 +1,7 @@
 {
   "name": "progress-band",
-  "version": "0.3.0",
-  "description": "Band above the Claude Code prompt: context, 5-hour and weekly usage with the week's tokens, plus live pixel progress bars for Claude's tasks and their subagents",
+  "version": "0.4.0",
+  "description": "Band above the Claude Code prompt: context, 5-hour and weekly usage with the week's tokens, plus live aurora progress bars for Claude's tasks and their subagents",
   "author": { "name": "Chrisutina", "url": "https://github.com/Chrisutina" },
   "homepage": "https://github.com/Chrisutina/claude-progress-band",
   "repository": "https://github.com/Chrisutina/claude-progress-band",

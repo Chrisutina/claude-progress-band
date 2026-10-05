@@ -37,6 +37,45 @@ function stubSession(on: On, saved: Map<string, unknown>, beforeSet?: (key: stri
 
 const stages = (...titles: string[]) => [{ name: 'S', steps: titles.map(title => ({ title })) }]
 const stored = (saved: Map<string, unknown>, id: string) => (saved.get('plans:one') as Plan[]).find(p => p.id === id)!
+// a checkpoint's arrival, as the band writes it: HH:MM:SS in the machine's own zone
+const hms = (ms: number) => [new Date(ms).getHours(), new Date(ms).getMinutes(), new Date(ms).getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
+
+test('a checkpoint reads as reached once its steps are finished, even steps sent in already finished', async ($, on) => {
+  const saved = new Map<string, unknown>()
+  const clock = stubSession(on, saved)
+  await $.session.start(START)
+  // 摸底 arrives finished, so the bar never saw when
+  await $.tool.call({ tool: TOOL, id: 'mv', title: '成片', stages: [{ name: '设计', steps: [{ title: '摸底', status: 'done' }, { title: '分析' }, { title: '定稿' }] }, { name: '交付', steps: [{ title: '渲染' }] }] })
+  await clock.advance(60_000)
+  // the plan comes back with the step in progress finished: it finished now, as a short op would have it
+  await $.tool.call({ tool: TOOL, id: 'mv', stages: [{ name: '设计', steps: [{ title: '摸底', status: 'done' }, { title: '分析', status: 'done' }, { title: '定稿', status: 'active' }] }, { name: '交付', steps: [{ title: '渲染' }] }] })
+  expect(stored(saved, 'mv').stages[0]!.steps.map(s => s.doneAt)).toEqual([undefined, NOW + 60_000, undefined])
+  const ui = await $.ui.mount(BAND)
+  const bar = JSON.stringify(await ui.find({ key: 'bar-mv' }))
+  expect(bar).toContain('<title>摸底 · 完成</title>')
+  expect(bar).toContain(`<title>分析 · ${hms(NOW + 60_000)} · 1m 0s</title>`)
+  expect(bar).toContain('<title>设计 阶段 · 未到达</title>')
+  await ui.unmount()
+})
+
+test("the person's next prompt clears the bars the last question finished and keeps the open ones", async ($, on) => {
+  const saved = new Map<string, unknown>()
+  stubSession(on, saved)
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL, id: 'old', stages: stages('A'), state: 'done' })
+  await $.tool.call({ tool: TOOL, id: 'open', stages: stages('A', 'B') })
+  await $.tool.call({ tool: TOOL, id: 'ask', stages: stages('A', 'B'), state: 'needs_input', note: '选哪个？' })
+  // a background task's notification is not the person asking again
+  await $.prompt.submit({ text: 'task finished', wait: false, origin: { kind: 'task-notification' } })
+  expect((saved.get('plans:one') as Plan[]).map(p => p.id)).toEqual(['old', 'open', 'ask'])
+  await $.prompt.submit({ text: '下一个问题', wait: false, origin: { kind: 'composer' } })
+  expect((saved.get('plans:one') as Plan[]).map(p => [p.id, p.state])).toEqual([['open', 'running'], ['ask', 'running']])
+  const ui = await $.ui.mount(BAND)
+  expect(await ui.find({ key: 'bar-old' })).toBeUndefined()
+  expect(await ui.find({ key: 'bar-open' })).toBeDefined()
+  await ui.unmount()
+})
 
 test('replanning duplicate titles consumes each finished occurrence once', async ($, on) => {
   const saved = new Map<string, unknown>()

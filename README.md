@@ -1,36 +1,37 @@
 # claude-progress-band
 
-Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**像素进度条**和它的**子代理**。界面文字可选中文或英文。
+Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**极光进度条**和它的**子代理**。界面文字可选中文或英文。
 
-版本 **0.3.0** · [更新记录](CHANGELOG.md) · [English](#english)
+版本 **0.4.0** · [更新记录](CHANGELOG.md) · [English](#english)
 
 ![浅色主题](docs/light.png)
 ![深色主题](docs/dark.png)
 
-<sub>预览为中文界面的静态截图；实际使用时管道里的光会流动，像素会闪烁。</sub>
+<sub>预览为中文界面的静态截图，还是 0.3 的像素样式；实际使用时极光在管道里流动，状态图标里的电子绕核转。</sub>
 
 ## 功能
 
 **用量**
-- 上下文、5 小时、每周三块像素表，按用量变绿 / 橙 / 红。
+- 上下文、5 小时、每周三块极光表，按用量变绿 / 橙 / 红。
 - 限额表上的竖线标出窗口已经过去多少：用量跑到竖线前面，说明消耗快于恢复。
-- 显示重置倒计时，5 小时窗口再显示重置时刻（本地时区）。
+- 显示重置倒计时，5 小时窗口再显示重置时刻（本地时区）。这一排始终保持一行，窗口窄时依次省略重置时刻、倒计时和 token 文字。
 - 每周表后合并显示"本会话 / 本周" token（K / M / B），前面是一个小桑基图标；悬停展开完整桑基图：输入 / 输出 / 缓存写 / 缓存读四类汇入本周总量，再分到本会话和其他会话。
-- 额度提醒：5 小时用量达到 85% 时，未完成的任务进度条整条闪烁红框，5 小时表旁边闪出"额度超过阈值"，直到窗口重置。只是界面提醒：不通知 Claude，也不打断或暂停当前工作。
+- 额度提醒：5 小时用量达到 85% 时，未完成的任务进度条里的极光变成霓虹红，发光、隔一阵闪一下；5 小时表旁边闪出"额度超过阈值"，直到窗口重置。只是界面提醒：不通知 Claude，也不打断或暂停当前工作。
 
 **当前状态**（和用量表同一排，排在最前）
-- "思考中"或正在用的工具名，三根音柱跳动；空闲时显示"空闲"，音柱变灰并缓慢摆动。
+- "思考中"或正在用的工具名，原子图标里的三颗电子绕核飞转；空闲时显示"空闲"，原子变灰、电子慢慢转。
 - 不重复应用自己已显示的内容：本轮用时看应用的轮次页脚，模型和 effort 看输入框的模型选择器。
 
 **任务进度条**
 - 每个任务一行：状态、标题、进度条、百分比、关闭按钮。
-- 像素管道：起点稀疏，越靠近白色滑块越密越深。
-- 实时：有工作在跑时（Claude 正在处理这个任务，或它的子代理在运行），光会在管道里缓慢流向滑块，子代理越多光越密；工作暂停时光以一半速度继续流动、像素轻轻闪烁，图标音柱缓慢摆动，不会静止。
+- 极光管道：三层柔光在填充部分里流向白色滑块，大团深色光云走得慢，细亮的光丝跑在前面。
+- 实时：有工作在跑时（Claude 正在处理这个任务，或它的子代理在运行），极光流向滑块，子代理越多流得越快；工作暂停时以一半速度继续漂，图标里的电子也转慢，不会静止。
 - 滑块显示当前阶段和步骤，悬停显示已用时间。
-- 阶段边界是短竖条，步骤是圆点；悬停显示到达时刻和用时。
-- 四种状态：进行中（紫）、需要输入（橙，缓慢呼吸）、出错（红）、完成（绿，滑块显示总用时）。
+- 阶段边界是短竖条，步骤是圆点；悬停显示到达时刻和用时（以完成状态直接写进计划的步骤只显示"完成"，没有时刻）。
+- 四种状态：进行中（紫）、需要输入（橙，缓慢呼吸）、出错（红，极光停住闪烁）、完成（绿，极光慢慢漂，滑块显示总用时）。
 - 计划可以在执行中改写，已完成的步骤按标题保留。
 - 进度条按会话保存，恢复会话时重新显示。
+- 发下一个问题时，上一个问题已完成的进度条自动清掉；未完成的留着，任何一条都可以点 ✕ 关掉。
 
 **子代理**
 - 每个子代理挂在所属任务下，显示名称、模型和 effort、当前工具、计时。
@@ -38,7 +39,7 @@ Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 
 **适配**
 - 文字使用应用自身的字体和颜色，浅色、深色主题都能看清。
 - 界面文字可选中文（默认）或英文，见[语言](#语言)。
-- 遵循系统的"减少动态效果"设置（额度提醒改为常亮红框）。
+- 遵循系统的"减少动态效果"设置（极光、电子和额度提醒都停下）。
 - 终端里用字符画显示同样的信息，额度提醒每秒闪一次。
 
 ## 安装
@@ -115,7 +116,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；本次发布在 Windows、Claude Code **2.1.288** 上通过 **27 项测试**。
+第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；本次发布在 Windows、Claude Code **2.1.288** 上通过 **30 项测试**。
 
 模组从这个目录加载一次之后，Claude Code 会写出 `.claude-plugin/types/`（已加入 `.gitignore`），`tsconfig.json` 会用到它；也可以在会话里运行 `/plugin-types` 生成类型。
 
@@ -135,23 +136,24 @@ claude plugin test .
 
 ## English
 
-A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly usage** (with the week's tokens), and a **live pixel progress bar** for each task Claude splits into stages and steps, with its **subagents** listed under it. The band speaks Chinese (default) or English: set `language` to `en`, see [Language](#language) below.
+A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly usage** (with the week's tokens), and a **live aurora progress bar** for each task Claude splits into stages and steps, with its **subagents** listed under it. The band speaks Chinese (default) or English: set `language` to `en`, see [Language](#language) below.
 
-<sub>The screenshots above show the Chinese UI, frozen; in use, light flows down the pipes and the pixels twinkle.</sub>
+<sub>The screenshots above show the Chinese UI, frozen, still in the 0.3 pixel look; in use, aurora light flows down the pipes and electrons circle in the state icons.</sub>
 
 **Features**
-- **Usage meters:** green / amber / red by level, and a tick on each limit marking how much of its window has gone. Reset countdowns, plus the 5-hour reset time in local time.
+- **Usage meters:** green / amber / red by level, and a tick on each limit marking how much of its window has gone. Reset countdowns, plus the 5-hour reset time in local time. The row stays on one line; a narrow window drops the reset time, then the countdowns, then the token words.
 - **Tokens:** this session's and the week's in one item after the weekly meter ("session / week", in K / M / B), led by a tiny Sankey icon. Hover for the full Sankey: input, output, cache write and cache read flow into the week's total, which splits into this session and the other sessions.
-- **Quota alert:** once the 5-hour window reaches 85%, every unfinished task bar flashes a red ring and a blinking "Quota over threshold" pill appears next to the 5-hour meter, until the window resets. It is a visual alert only: Claude is not told, and nothing stops or pauses the work.
-- **Current state:** leads the meters' row: "Thinking" or the tool in use, with dancing level bars; "Idle" with grey bars swaying slowly. It leaves out what the app already shows: the turn time (the turn footer) and the model and effort (the model picker).
+- **Quota alert:** once the 5-hour window reaches 85%, the aurora in every unfinished task bar turns neon red, glowing and flickering now and then, and a blinking "Quota over threshold" pill appears next to the 5-hour meter, until the window resets. It is a visual alert only: Claude is not told, and nothing stops or pauses the work.
+- **Current state:** leads the meters' row: "Thinking" or the tool in use, with an atom whose electrons race round; "Idle" with a grey atom spinning slowly. It leaves out what the app already shows: the turn time (the turn footer) and the model and effort (the model picker).
 - **Task rows:** state, title, bar, percent, close button.
-  - The bar is a pixel pipe that packs denser toward a white thumb.
-  - Light flows down the pipe while something works on it: the current turn, or the task's subagents. More running agents means more light. While the work pauses, the light keeps drifting at half speed and the pixels twinkle softly, so the bar never freezes.
-  - The thumb shows the stage and step; hover it for the elapsed time. Stage ticks and step dots show their arrival time on hover.
-- **Four states:** running, needs input, error, done. A finished bar turns green and shows the total time.
+  - The bar is a pipe of aurora: three layers of soft light drift toward a white thumb, big deep clouds slowly, thin bright wisps racing ahead.
+  - The aurora streams while something works on it: the current turn, or the task's subagents. More running agents means faster light. While the work pauses it keeps drifting at half speed and the icon's electrons slow down, so the bar never freezes.
+  - The thumb shows the stage and step; hover it for the elapsed time. Stage ticks and step dots show their arrival time on hover (a step sent in already finished shows "done" without a time).
+- **Four states:** running, needs input (breathes), error (the aurora stops and blinks), done (green, drifting slowly, with the total time).
 - **Plans** can change mid-run; finished steps are kept by title. Bars are saved per session and come back on resume.
+- **Cleanup:** your next prompt clears the bars the previous one finished; unfinished bars stay, and ✕ closes any bar.
 - **Subagent rows:** name, model and effort, current tool, time.
-- **Themes and motion:** follows the app's light or dark theme and the OS "reduce motion" setting (the quota alert then holds a steady red ring). The terminal shows a text version, where the quota alert blinks once a second.
+- **Themes and motion:** follows the app's light or dark theme and the OS "reduce motion" setting (the aurora, the electrons and the quota alert then stand still). The terminal shows a text version, where the quota alert blinks once a second.
 
 **Install** (Claude Code v2.1.286 or later; if the mod does not load on v2.1.286, set `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and restart):
 
@@ -192,7 +194,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-Release verification: **27 tests passed on Windows with Claude Code 2.1.288**, the quota alert and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
+Release verification: **30 tests passed on Windows with Claude Code 2.1.288**, the quota alert and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
 
 The desktop UI has been used on Windows. Terminal rendering and the English UI have automated tests and screenshot checks; macOS, VS Code and mobile have not been tested manually. The mods API is early and may change with Claude Code updates.
 

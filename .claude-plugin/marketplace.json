@@ -1,12 +1,12 @@
 {
   "name": "progress-band",
-  "description": "progress-band: usage meters and live pixel progress bars above the Claude Code prompt",
+  "description": "progress-band: usage meters and live aurora progress bars above the Claude Code prompt",
   "owner": { "name": "Chrisutina", "url": "https://github.com/Chrisutina" },
   "plugins": [
     {
       "name": "progress-band",
       "source": ".",
-      "description": "Context, 5-hour and weekly usage plus live pixel progress bars for Claude's tasks and their subagents, above the prompt"
+      "description": "Context, 5-hour and weekly usage plus live aurora progress bars for Claude's tasks and their subagents, above the prompt"
     }
   ]
 }
