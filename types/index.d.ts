@@ -23,7 +23,7 @@ export type Plan = {
   state: PlanState
   note: string | null
   startedAt: number
-  // when the plan was finished; the pill then shows the time it took
+  // when the plan was finished; the thumb then shows the time it took
   endedAt?: number | null
   // when the model last moved this bar: of the running bars, the one it touched last is the one it works on
   touchedAt?: number

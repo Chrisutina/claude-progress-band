@@ -254,7 +254,7 @@ test('the desktop meters stay on one line: what has no room drops, and a long to
   expect(during.text.slice(during.text.indexOf('上下文'))).toBe(narrow.text.slice(narrow.text.indexOf('上下文')))
 })
 
-test('past the 5-hour alert line the open bar\'s light turns neon red and the meters say so, while Claude works on untold', async ($, on) => {
+test('past 90% of the 5-hour window the meter turns into a sign and every 2 more points the open bar glitches WARNING for 6 s, while Claude works on untold', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   stubSession(on, new Map())
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
@@ -264,49 +264,95 @@ test('past the 5-hour alert line the open bar\'s light turns neon red and the me
   await $.session.start(START)
   await $.tool.call({ tool: TOOL, id: 'job', title: '任务', stages: [{ name: 'S', steps: [{ title: 'A' }, { title: 'B' }] }] })
   await $.tool.call({ tool: TOOL, id: 'finished', title: '已完成任务', stages: [{ name: 'S', steps: [{ title: 'A' }] }], state: 'done' })
-  const resetsAt = NOW + 60_000
-  const measure = (percentUsed: number) =>
-    $.session.measure({ changed: ['rateLimits'], context: { tokens: 1, window: 2, percent: 20 }, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt: new Date(resetsAt).toISOString() }] })
+  const resetsAt = NOW + 120_000
+  const measure = (percentUsed: number, resets = resetsAt) =>
+    $.session.measure({ changed: ['rateLimits'], context: { tokens: 1, window: 2, percent: 20 }, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt: new Date(resets).toISOString() }] })
   const look = async (surface: 'terminal' | 'desktop') => {
     const ui = await $.ui.mount({ ...BAND, surface })
-    const alert = JSON.stringify((await ui.find({ key: 'quota' })) ?? null)
+    const drawn = JSON.stringify(await ui.drawn())
     const bar = JSON.stringify(await ui.find({ key: 'bar-job' }))
     const finished = JSON.stringify(await ui.find({ key: 'bar-finished' }))
+    const meter = JSON.stringify(await ui.find({ key: 'meter-five_hour' }))
     await ui.unmount()
-    return { alert, bar, finished }
+    return { drawn, bar, finished, meter }
   }
 
-  // the alert: the aurora in neon red, glowing and flickering
-  const isNeon = (bar: string) => bar.includes('class=\\"nx\\"')
+  // the glitch: the bar a band tearing every 4.8 s, on the terminal WARNING; the meter an amber dot-matrix sign
+  const isBand = (drawing: string) => drawing.includes('mix-blend-mode:screen') && drawing.includes('4.8s steps(1,end)')
+  const isSign = (drawing: string) => drawing.includes('#FFB020') && drawing.includes('steps(')
+  const isGlitching = async () => isBand((await look('desktop')).bar)
 
-  await measure(84)
-  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toBe('null')
-  expect(isNeon((await look('desktop')).bar)).toBe(false)
+  // below the line nothing changes
+  await measure(89)
+  const before = await look('desktop')
+  expect(isBand(before.bar)).toBe(false)
+  expect(isSign(before.meter)).toBe(false)
+  expect((await look('terminal')).bar).not.toContain('WARNING')
 
-  await measure(85)
+  // at 90% the open bar glitches and the meter turns into the sign; Claude reads nothing of it
+  await measure(90)
   await $.turn.start({ text: 'go', turnId: 't1' })
-  // Claude reads nothing of it: the tool result comes back as the tool gave it
   const ran = await $.tool.call({ tool: 'Read', file_path: '/work/a.ts' })
   expect(ran).toMatchObject({ result: 'ok' })
   expect(JSON.stringify(ran)).not.toContain('progress-band')
-  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toContain('额度超过阈值')
-  // on the desktop the open bar's light turns neon red and keeps streaming, with no flashing ring; the pill by
-  // the 5-hour meter blinks its words; a finished bar stays as it was
+  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).drawn).not.toContain('阈值')
+  expect((await look('terminal')).bar).toContain('WARNING // WARNING')
+  // the band streams WARNING, a 69.5 px run a lap, at half pace with no work on it; a finished bar stays as it was
   const desk = await look('desktop')
-  expect(isNeon(desk.bar)).toBe(true)
-  expect(desk.bar.match(/class=\\"flow\\"/g)).toHaveLength(3)
-  expect(desk.bar).toContain('#FF2A6D')
-  expect(desk.bar).not.toContain('class=\\"qa\\"')
-  expect(desk.alert).toContain('class=\\"qa\\"')
-  expect(desk.finished).toBeDefined()
-  expect(isNeon(desk.finished)).toBe(false)
+  expect(isBand(desk.bar)).toBe(true)
+  expect(desk.bar).toContain('psl 6.32s')
+  expect(desk.bar).not.toContain('pau0')
+  expect(isSign(desk.meter)).toBe(true)
+  expect(isBand(desk.finished)).toBe(false)
+
+  // six seconds later the bar is its aurora again while the meter keeps its sign, and one more point changes nothing
+  await clock.advance(6000)
+  const calm = await look('desktop')
+  expect(isBand(calm.bar)).toBe(false)
+  expect(calm.bar).toContain('pau0')
+  expect(isSign(calm.meter)).toBe(true)
+  expect((await look('terminal')).bar).not.toContain('WARNING')
+  await measure(91)
+  expect(await isGlitching()).toBe(false)
+  // two more points glitch it again, for six seconds
+  await measure(92)
+  expect(await isGlitching()).toBe(true)
+  await clock.advance(5000)
+  expect(await isGlitching()).toBe(true)
+  await clock.advance(1000)
+  expect(await isGlitching()).toBe(false)
+
   // the turn ends and nothing waits for the person: the bar keeps running
   await $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'ok' })
   expect((await look('desktop')).bar).toContain('任务：进行中')
-  // an expired reading must clear the alert even before a new usage measurement arrives
-  await clock.advance(resetsAt - NOW)
-  for (const surface of ['terminal', 'desktop'] as const) expect((await look(surface)).alert).toBe('null')
-  expect(isNeon((await look('desktop')).bar)).toBe(false)
+  // an expired reading clears the sign even before a new measurement arrives; the next climb past the line glitches again
+  await clock.advance(resetsAt - (NOW + 12_000))
+  const after = await look('desktop')
+  expect(isBand(after.bar)).toBe(false)
+  expect(isSign(after.meter)).toBe(false)
+  await measure(90, resetsAt + 5 * 3_600_000)
+  expect(await isGlitching()).toBe(true)
+})
+
+test('a failed bar turns into a glitch band streaming ERROR, and reads ERROR on the terminal', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  stubSession(on, new Map())
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL, id: 'job', title: '任务', stages: [{ name: 'S', steps: [{ title: 'A' }, { title: 'B' }] }] })
+  await $.tool.call({ tool: TOOL, id: 'job', failed: 'A', note: 'boom' })
+  const bar = async (surface: 'terminal' | 'desktop') => {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    const found = JSON.stringify(await ui.find({ key: 'bar-job' }))
+    await ui.unmount()
+    return found
+  }
+  // the word in cyan and magenta fringes, tearing every 2.2 s, with no aurora left
+  const desk = await bar('desktop')
+  expect(desk).toContain('ERROR')
+  expect(desk).toContain('mix-blend-mode:screen')
+  expect(desk).toContain('2.2s steps(1,end)')
+  expect(desk).not.toContain('pau0')
+  expect(await bar('terminal')).toContain('ERROR // ERROR')
 })
 
 test('with language en the band says all of it in English', { options: { language: 'en' } }, async ($, on) => {
@@ -352,7 +398,7 @@ test('with language en the band says all of it in English', { options: { languag
     const drawn = JSON.stringify(await ui.drawn())
     // no Chinese anywhere: words, alt texts and drawings alike
     expect(drawn).not.toMatch(/[　-鿿＀-￯]/)
-    for (const words of ['Idle', 'Context', '5-hour', 'Weekly', 'Quota over threshold', 'starting']) expect(drawn).toContain(words)
+    for (const words of ['Idle', 'Context', '5-hour', 'Weekly', 'starting']) expect(drawn).toContain(words)
     if (surface === 'desktop') {
       for (const words of ['Session / week tokens · this machine', 'Interface: running, Build 2/2, 33%', 'Build stage', 'not reached', 'cache write', 'other sessions']) {
         expect(drawn).toContain(words)

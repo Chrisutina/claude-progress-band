@@ -14,9 +14,12 @@ const usage = atom({ plugin: 'progress-band', key: 'usage' } as const, { context
 // the turn took and the model it runs on stay out: the app's turn footer and model picker show them
 const activity = atom({ plugin: 'progress-band', key: 'activity' } as const, { state: 'idle', tool: null })
 const session = atom({ plugin: 'progress-band', key: 'session' } as const, { tokens: 0 })
-// the person's alert line: past this share of the 5-hour window the open bars' aurora turns neon red and the meters say so;
+// the person's alert line: past this share of the 5-hour window the 5-hour meter turns into a sign, and each time the
+// window climbs GLITCH_STEP more points (90%, 92%, 94%…) the open bars glitch for GLITCH_MS. No words anywhere, and
 // Claude is not told, so the work goes on
-const QUOTA_ALERT = 85
+const QUOTA_ALERT = 90
+const GLITCH_STEP = 2
+const GLITCH_MS = 6000
 
 const MAX_BARS = 3
 const MAX_AGENTS = 30 // kept per bar; the oldest finished go first
@@ -49,7 +52,6 @@ const ZH = {
   stopped: '已停止',
   failed: '失败',
   notReached: '未到达',
-  quota: '额度超过阈值',
   // the token card's width; its labels take the room either side of the flows
   sankeyW: 300,
   stageEnd: (stage: string) => `${stage} 阶段`,
@@ -77,7 +79,6 @@ const EN: typeof ZH = {
   stopped: 'stopped',
   failed: 'failed',
   notReached: 'not reached',
-  quota: 'Quota over threshold',
   sankeyW: 360,
   stageEnd: stage => `${stage} stage`,
   ran: time => `running for ${time}`,
@@ -294,11 +295,11 @@ const compact = (n: number): string => {
 // The bars are aurora: soft light drifting through the filled part of a grey pipe towards a white thumb, in three
 // layers of puffs, big deep clouds slow, mid ones, thin bright wisps racing ahead. It moves with the work, live: while
 // Claude's turn runs on a task, or its agents do, the light streams, quicker the more agents run; while the work pauses
-// it drifts at half speed, so a pause never looks frozen; a wait breathes, an error freezes and blinks, a done bar
-// drifts slowly; every change glides in .42 s. The state icons are atoms, three electrons on tilted orbits, quick while
-// work runs and slow while it pauses. Past the quota alert line every open bar's light turns neon red, glows and
-// flickers, and a red pill by the 5-hour meter blinks its words. Words are the app's own text, so they follow its
-// light or dark theme; the drawings use mid-tone colours that read on either.
+// it drifts at half speed, so a pause never looks frozen; a wait breathes, a done bar drifts slowly; every change glides
+// in .42 s. A failed bar becomes a glitch band streaming ERROR; past the quota alert line the 5-hour meter becomes a
+// dot-matrix sign, and at every second point the window climbs the open bars glitch with WARNING for six seconds. The state icons are atoms, three electrons on tilted orbits,
+// quick while work runs and slow while it pauses. Words are the app's own text, so they follow its light or dark theme;
+// the drawings use mid-tone colours that read on either, the strips their own dark panels.
 type Tone = { light: string; mid: string; deep: string }
 const TONE: Record<PlanState, Tone> = {
   running: { light: '#CDBDFB', mid: '#9D84F2', deep: '#6F4FDF' },
@@ -319,17 +320,14 @@ const TRACK_FILL = 'rgba(128,128,128,.16)'
 const TICK = 'rgba(128,128,128,.62)'
 const THUMB_INK = '#3B3A36'
 const THUMB_DIM = '#8C8A84'
-// .br a wait's breath, .bk an error's blink, .nx the alert's flicker, .qa the alert pill, .irot an electron's orbit,
-// .ipop a done atom's pop
+// .br a wait's breath, .bk an error's blink, .irot an electron's orbit, .ipop a done atom's pop
 const CSS = `<style>
 .br{animation:br 2.4s cubic-bezier(.45,0,.55,1) infinite}@keyframes br{50%{opacity:.45}}
 .bk{animation:bk 1.6s ease-in-out infinite}@keyframes bk{50%{opacity:.3}}
-.nx{animation:nx 3.2s linear infinite}@keyframes nx{0%,90%,93%,95%,100%{opacity:1}91.5%{opacity:.4}94%{opacity:.65}}
 .irot{transform-origin:0 0;animation:irot 1s linear infinite}@keyframes irot{to{transform:rotate(360deg)}}
 .ipop{transform-origin:7px 7px;animation:ipop 3.2s ease-in-out infinite}@keyframes ipop{0%,78%,100%{transform:scale(1)}86%{transform:scale(1.14)}}
-.qa{animation:qa 1.2s ease-in-out infinite}@keyframes qa{0%,100%{opacity:1}50%{opacity:.2}}
-.tn{font:600 11.5px ${SANS};fill:${THUMB_INK}}.tc{font:500 10.5px ${MONO};fill:${THUMB_DIM}}.tg{font:700 11.5px ${SANS}}.qt{font:600 11.5px ${SANS};fill:${TONE.error.mid}}
-@media (prefers-reduced-motion:reduce){.br,.bk,.nx,.qa{animation:none}.flow,.glide,.irot,.ipop{animation:none!important}}
+.tn{font:600 11.5px ${SANS};fill:${THUMB_INK}}.tc{font:500 10.5px ${MONO};fill:${THUMB_DIM}}.tg{font:700 11.5px ${SANS}}
+@media (prefers-reduced-motion:reduce){.br,.bk{animation:none}.flow,.glide,.irot,.ipop{animation:none!important}}
 </style>`
 
 const svgOpen = (W: number, H: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
@@ -359,10 +357,8 @@ const cut = (s: string, room: number, measure: (s: string) => number) => {
   return `${out.join('').trimEnd()}…`
 }
 
-type Motion = 'flow' | 'calm' | 'breathe' | 'still' | 'gas'
+type Motion = 'flow' | 'calm' | 'breathe' | 'still'
 
-// past the alert line the light turns neon red
-const NEON: Tone = { deep: '#C2003D', mid: '#FF2A6D', light: '#FFD1DE' }
 // three layers of soft puffs: big deep clouds drifting slowly, mid ones, and thin bright wisps racing ahead. Each layer
 // is a tile of puffs repeated down the pipe, so it loops seamlessly
 const AURORA = [
@@ -372,12 +368,10 @@ const AURORA = [
 ] as const
 
 // a pipe of W x H at y: the grey track, and over its filled part the aurora in the tone, faster with each running
-// agent (traffic), half speed while the work pauses, slow once still; a wait breathes and an error freezes and blinks.
-// Past the alert line (motion 'gas') it is neon red, glows and flickers. ids are prefixed, so several pipes can share
-// one drawing
-function aurora(id: string, W: number, H: number, y: number, fill: number, from: number, tone: Tone, motion: Motion, seed: number, traffic = 0, isError = false): { defs: string; body: string } {
-  const isAlert = motion === 'gas'
-  const t = isAlert ? NEON : tone
+// agent (traffic), half speed while the work pauses, slow once still; a wait breathes. ids are prefixed, so several
+// pipes can share one drawing
+type Pipe = { defs: string; body: string }
+function aurora(id: string, W: number, H: number, y: number, fill: number, from: number, t: Tone, motion: Motion, seed: number, traffic = 0): Pipe {
   const r = H / 2
   const f = (n: number) => n.toFixed(1)
   const lerp = ([a, b]: readonly [number, number], s: number) => a + (b - a) * s
@@ -386,8 +380,7 @@ function aurora(id: string, W: number, H: number, y: number, fill: number, from:
   const clip =
     (glide ? `<style>@keyframes ${id}grow{from{width:${f(from)}px}to{width:${f(fill)}px}}</style>` : '') +
     `<clipPath id="${id}c"><rect width="${f(fill)}" height="${H}" rx="${r}"${glide ? ` class="glide" style="animation:${id}grow .42s ${EASE} both"` : ''}/></clipPath>`
-  const isLive = motion === 'flow' || (isAlert && traffic > 0)
-  const rate = isError && !isAlert ? 0 : isLive ? 1 + 0.3 * Math.max(0, traffic - 1) : motion === 'calm' || isAlert ? 0.5 : 0.3
+  const rate = motion === 'flow' ? 1 + 0.3 * Math.max(0, traffic - 1) : motion === 'calm' ? 0.5 : 0.3
   const layers = AURORA.map((g, i) => {
     const tile = Array.from({ length: g.puffs }, (_, j) => {
       const roll = (k: number) => hash(seed + i * 31 + j * 7, k, 5)
@@ -397,20 +390,113 @@ function aurora(id: string, W: number, H: number, y: number, fill: number, from:
     const puffs = Array.from({ length: Math.ceil(fill / g.tile) + 4 }, (_, k) =>
       tile.map(p => `<ellipse cx="${f((k - 2) * g.tile + p.cx)}" cy="${f(p.cy)}" rx="${f(p.rx)}" ry="${f(p.ry)}" fill="url(#${id}a${i})" opacity="${p.alpha.toFixed(2)}"/>`).join(''),
     ).join('')
-    return rate
-      ? `<style>@keyframes ${id}au${i}{to{transform:translateX(${g.tile}px)}}</style><g class="flow" style="animation:${id}au${i} ${(g.tile / (g.speed * rate)).toFixed(2)}s linear infinite">${puffs}</g>`
-      : `<g>${puffs}</g>`
+    return `<style>@keyframes ${id}au${i}{to{transform:translateX(${g.tile}px)}}</style><g class="flow" style="animation:${id}au${i} ${(g.tile / (g.speed * rate)).toFixed(2)}s linear infinite">${puffs}</g>`
   }).join('')
   const defs =
     clip +
     AURORA.map((g, i) => `<radialGradient id="${id}a${i}"><stop offset="0" stop-color="${t[g.tone]}"/><stop offset=".55" stop-color="${t[g.tone]}" stop-opacity=".5"/><stop offset="1" stop-color="${t[g.tone]}" stop-opacity="0"/></radialGradient>`).join('') +
-    `<filter id="${id}s" x="0" y="-50%" width="100%" height="200%"><feGaussianBlur stdDeviation="1.2"/></filter>` +
-    (isAlert ? `<filter id="${id}n" x="-2%" y="-60%" width="104%" height="220%"><feGaussianBlur stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>` : '')
-  const mood = isError && !isAlert ? ' class="bk"' : motion === 'breathe' ? ' class="br"' : ''
-  const pipe =
-    `<rect width="${W}" height="${H}" rx="${r}" fill="${TRACK_FILL}"/><g clip-path="url(#${id}c)"${mood}>` +
-    `<rect width="${f(fill)}" height="${H}" fill="${t.mid}" opacity=".25"/><g filter="url(#${id}s)">${layers}</g></g>`
-  const body = `<g transform="translate(0 ${y})">${isAlert ? `<g class="nx" filter="url(#${id}n)">${pipe}</g>` : pipe}</g>`
+    `<filter id="${id}s" x="0" y="-50%" width="100%" height="200%"><feGaussianBlur stdDeviation="1.2"/></filter>`
+  const body =
+    `<g transform="translate(0 ${y})"><rect width="${W}" height="${H}" rx="${r}" fill="${TRACK_FILL}"/><g clip-path="url(#${id}c)"${motion === 'breathe' ? ' class="br"' : ''}>` +
+    `<rect width="${f(fill)}" height="${H}" fill="${t.mid}" opacity=".25"/><g filter="url(#${id}s)">${layers}</g></g></g>`
+  return { defs, body }
+}
+
+// ---------- strips ----------
+// A failed bar, and an open bar while the quota glitches, turn into glitch bands, their word flowing through the pipe
+// toward the start. A bar's band covers the whole track, the part past the head dimmed, so one that fails at its first step
+// still reads. Past the alert line the 5-hour meter turns into a dot-matrix sign over its filled part
+
+// where a strip shows, its head gliding from where it was drawn last
+function stripRegion(id: string, W: number, H: number, fill: number, from: number, isWhole: boolean): { defs: string; attrs: string } {
+  const f = (n: number) => n.toFixed(1)
+  const glide = Math.abs(from - fill) > 0.5
+  const grow = glide ? `<style>@keyframes ${id}grow{from{width:${f(from)}px}to{width:${f(fill)}px}}</style>` : ''
+  const head = `width="${f(fill)}" height="${H}"${glide ? ` class="glide" style="animation:${id}grow .42s ${EASE} both"` : ''}`
+  if (!isWhole) return { defs: `${grow}<clipPath id="${id}c"><rect ${head} rx="${H / 2}"/></clipPath>`, attrs: `clip-path="url(#${id}c)"` }
+  return {
+    defs:
+      `${grow}<clipPath id="${id}c"><rect width="${W}" height="${H}" rx="${H / 2}"/></clipPath>` +
+      `<mask id="${id}m" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#666"/><rect ${head} fill="#fff"/></mask>`,
+    attrs: `clip-path="url(#${id}c)" mask="url(#${id}m)"`,
+  }
+}
+
+// a run repeating every `period` px, drawn from two periods before the start to two past the end, so its slide toward
+// the start, one period each period / speed s, never shows an edge; `timing` lets the sign step a dot at a time
+const tiles = (W: number, period: number, draw: (x: number) => string) => Array.from({ length: Math.ceil(W / period) + 4 }, (_, i) => draw((i - 2) * period)).join('')
+const slideBack = (id: string, period: number, speed: number, inner: string, timing = 'linear') =>
+  `<style>@keyframes ${id}sl{to{transform:translateX(${(-period).toFixed(1)}px)}}</style><g class="flow" style="animation:${id}sl ${(period / speed).toFixed(2)}s ${timing} infinite">${inner}</g>`
+
+// past the alert line the 5-hour meter becomes a dot-matrix sign: amber arrows marching over a dark panel a dot at a
+// time, 14 px/s; a tile is 17 dots long with two arrows of 4 x 3 dots
+const SIGN = '#FFB020'
+const ARROW: [number, number][] = [[0, 0], [1, 1], [1, 2], [0, 3]]
+const SIGN_COLS = 17
+function sign(id: string, W: number, H: number, y: number, fill: number, from: number): Pipe {
+  const f = (n: number) => n.toFixed(1)
+  const top = (H - 8) / 2 + 1 // the first of four rows' centre
+  const lit = [...ARROW, ...ARROW.map(([c, r]): [number, number] => [c + 7, r])]
+  const tile = (x: number) => lit.map(([c, r]) => `<circle cx="${f(x + 1 + 2 * c)}" cy="${f(top + 2 * r)}" r=".8"/>`).join('')
+  const region = stripRegion(id, W, H, fill, from, false)
+  const defs =
+    region.defs +
+    `<pattern id="${id}g" width="2" height="2" patternUnits="userSpaceOnUse" y="${f(top - 1)}"><circle cx="1" cy="1" r=".62" fill="${SIGN}" fill-opacity=".16"/></pattern>` +
+    `<filter id="${id}l" x="-2%" y="-40%" width="104%" height="180%"><feGaussianBlur stdDeviation=".8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`
+  const body =
+    `<g transform="translate(0 ${y})"><rect width="${W}" height="${H}" rx="${H / 2}" fill="${TRACK_FILL}"/><g ${region.attrs}>` +
+    `<rect width="${W}" height="${H}" fill="#15111A"/><rect y="${f(top - 1)}" width="${W}" height="8" fill="url(#${id}g)"/>` +
+    `<g filter="url(#${id}l)" fill="${SIGN}">${slideBack(id, SIGN_COLS * 2, 14, tiles(W, SIGN_COLS * 2, tile), `steps(${SIGN_COLS})`)}</g>` +
+    `<rect y=".8" width="${W}" height=".8" fill="#fff" opacity=".08"/></g></g>`
+  return { defs, body }
+}
+
+// a glitch band: the word streams toward the start in cyan and magenta fringes under scanlines, and every few seconds
+// the band tears, three slices jumping sideways twice, noise blocks flashing and the band flickering. A failed bar
+// reads ERROR in red, tearing hard every 2.2 s at 20 px/s; while the quota glitches an open bar reads WARNING in amber,
+// tearing softly every 4.8 s at 22 px/s while work runs on it (30% more per agent past the first), half that while it
+// pauses
+const GLITCH = {
+  error: { word: 'ERROR', core: '#FF4D6A', tear: 2.2, jump: 1 },
+  warn: { word: 'WARNING', core: '#FFC23D', tear: 4.8, jump: 0.6 },
+} as const
+function glitch(id: string, W: number, H: number, y: number, fill: number, from: number, seed: number, kind: keyof typeof GLITCH, traffic = 0): Pipe {
+  const f = (n: number) => n.toFixed(1)
+  const g = GLITCH[kind]
+  const speed = kind === 'error' ? 20 : 22 * (traffic > 0 ? 1 + 0.3 * (traffic - 1) : 0.5)
+  const size = H * 0.62
+  const tw = (g.word.length + 3) * size * 0.6 // the word and ' //' in the mono face
+  const period = tw + 10
+  const run = (x: number) => `<text x="${f(x)}" y="${f(H / 2 + size * 0.35)}" textLength="${f(tw)}" lengthAdjust="spacingAndGlyphs">${g.word} <tspan fill-opacity=".5">//</tspan></text>`
+  const layer = (dx: number, ink: string, blend: string) => `<g transform="translate(${dx} 0)" fill="${ink}" style="font:700 ${f(size)}px ${MONO}${blend}">${tiles(W, period, run)}</g>`
+  const screen = ';mix-blend-mode:screen;opacity:.7'
+  const crawl = slideBack(id, period, speed, layer(-0.7, '#00E5FF', screen) + layer(0.7, '#FF2A6D', screen) + layer(0, g.core, ''))
+  const cuts = [[0, 0.38, 3, -2], [0.38, 0.7, -4, 2.5], [0.7, 1, 2, -1.5]] as const
+  const slices = cuts
+    .map(
+      ([, , a, b], i) =>
+        `<style>@keyframes ${id}j${i}{0%,${88 + i}%,${93 + i}%,100%{transform:none}${89 + i}%{transform:translateX(${f(a * g.jump)}px)}${91 + i}%{transform:translateX(${f(b * g.jump)}px)}}</style>` +
+        `<g clip-path="url(#${id}s${i})"><g class="flow" style="animation:${id}j${i} ${g.tear}s steps(1,end) infinite">${crawl}</g></g>`,
+    )
+    .join('')
+  const inks = ['#00E5FF', '#FF2A6D', g.core]
+  const noise = inks
+    .concat(inks)
+    .map((ink, i) => {
+      const r = (n: number) => hash(seed, i, n)
+      return `<rect x="${f(4 + r(1) * Math.max(24, W - 16))}" y="${f(r(2) * (H - 3))}" width="${f(3 + 9 * r(3))}" height="${f(1 + 2 * r(4))}" fill="${ink}"/>`
+    })
+    .join('')
+  const region = stripRegion(id, W, H, fill, from, true)
+  const defs =
+    region.defs +
+    cuts.map(([y0, y1], i) => `<clipPath id="${id}s${i}"><rect y="${f(y0 * H)}" width="${W}" height="${f((y1 - y0) * H)}"/></clipPath>`).join('') +
+    `<pattern id="${id}sc" width="4" height="3" patternUnits="userSpaceOnUse"><rect width="4" height=".8" fill="#000" fill-opacity=".2"/></pattern>` +
+    `<style>@keyframes ${id}nz{0%,88.5%,93%,100%{opacity:0}89%,92%{opacity:.9}}@keyframes ${id}fk{0%,89%,91%,100%{opacity:1}90%{opacity:.6}}</style>`
+  const body =
+    `<g transform="translate(0 ${y})"><rect width="${W}" height="${H}" rx="${H / 2}" fill="${TRACK_FILL}"/><g ${region.attrs}>` +
+    `<g class="flow" style="animation:${id}fk ${g.tear}s steps(1,end) infinite"><rect width="${W}" height="${H}" fill="#110D17"/>${slices}` +
+    `<g class="flow" style="animation:${id}nz ${g.tear}s steps(1,end) infinite;opacity:0">${noise}</g><rect width="${W}" height="${H}" fill="url(#${id}sc)"/></g></g></g>`
   return { defs, body }
 }
 
@@ -610,18 +696,40 @@ const drawnRows = new WeakMap<Plan, { key: string; row: Row }>()
 // the head each row showed last time it was drawn, so a change glides from there
 const lastHead = new Map<string, number>()
 
+// a bar's pipe: a glitch band once it failed or, while it is open, while the quota glitches; else the aurora, live
+// while something works on it and drifting at half speed while the work pauses
+function barPipe(p: Plan, W: number, y: number, fill: number, from: number, traffic: number, isGlitch: boolean): Pipe {
+  if (p.state === 'error') return glitch('p', W, TRACK_H, y, fill, from, seedOf(p.id), 'error')
+  if (isGlitch && p.state !== 'done') return glitch('p', W, TRACK_H, y, fill, from, seedOf(p.id), 'warn', traffic)
+  const motion: Motion = p.state === 'running' ? (traffic > 0 ? 'flow' : 'calm') : p.state === 'needs_input' ? 'breathe' : 'still'
+  return aurora('p', W, TRACK_H, y, fill, from, TONE[p.state], motion, seedOf(p.id), traffic)
+}
+
+// the last GLITCH_STEP the 5-hour window climbed past the alert line by, and when; a window that resets starts over
+let quota = { step: -1, at: -Infinity }
+// whether the open bars glitch now: for GLITCH_MS from each step the window climbs past the alert line. The band redraws
+// once the glitch is over
+function quotaGlitch($: EngineInterface, used: number, now: number): boolean {
+  const step = used >= QUOTA_ALERT ? Math.floor((used - QUOTA_ALERT) / GLITCH_STEP) : -1
+  if (step > quota.step) {
+    quota = { step, at: now }
+    $.clock.after(GLITCH_MS, () => $.ui.invalidate('ui.render'))
+  } else if (step < quota.step) quota = { ...quota, step }
+  return now >= quota.at && now - quota.at < GLITCH_MS
+}
+
 // traffic: how much works on the bar right now, the main turn and each running agent counting one;
-// isAlert: the 5-hour window is past the person's alert line
-function trackSvg(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
-  const key = `${W}|${traffic}|${isAlert}`
+// isGlitch: the quota glitches right now (quotaGlitch)
+function trackSvg(p: Plan, W: number, traffic: number, isGlitch: boolean): Row {
+  const key = `${W}|${traffic}|${isGlitch}`
   const cached = drawnRows.get(p)
   if (cached?.key === key) return cached.row
-  const row = drawTrack(p, W, traffic, isAlert)
+  const row = drawTrack(p, W, traffic, isGlitch)
   drawnRows.set(p, { key, row })
   return row
 }
 
-function drawTrack(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
+function drawTrack(p: Plan, W: number, traffic: number, isGlitch: boolean): Row {
   const H = ROW_H
   const cy = H / 2
   const w = where(p)
@@ -630,10 +738,7 @@ function drawTrack(p: Plan, W: number, traffic: number, isAlert: boolean): Row {
   const fill = (done ? 1 : Math.min(1, w.pos / Math.max(1, w.total))) * W
   const from = lastHead.get(p.id) ?? fill
   lastHead.set(p.id, fill)
-  // live: it streams while something works on it, and drifts at half speed while the work pauses;
-  // past the alert line an open bar's light turns neon red
-  const motion: Motion = isAlert && !done ? 'gas' : p.state === 'running' ? (traffic > 0 ? 'flow' : 'calm') : p.state === 'needs_input' ? 'breathe' : 'still'
-  const tube = aurora('p', W, TRACK_H, (H - TRACK_H) / 2, fill, from, tone, motion, seedOf(p.id), traffic, p.state === 'error')
+  const tube = barPipe(p, W, (H - TRACK_H) / 2, fill, from, traffic, isGlitch)
 
   // checkpoints, and their hover chips: the name, when it was reached and how long it took
   const took = stepTimes(p)
@@ -742,8 +847,9 @@ const isWide = (cp: number) =>
   cp > 0xffff || (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe4f) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6)
 const cellsOf = (s: string) => [...s].reduce((w, ch) => w + (isWide(ch.codePointAt(0) ?? 0) ? 2 : 1), 0)
 
-// the bar as text: finished share filled, stage boundaries ┃, step boundaries • where there is room
-function barText(p: Plan, W: number): { done: string; rest: string } {
+// the bar as text: finished share filled, stage boundaries ┃, step boundaries • where there is room; a strip's
+// words instead, stepped toward the start by `shift` cells
+function barText(p: Plan, W: number, words = '', shift = 0): { done: string; rest: string } {
   const w = where(p)
   const filled = Math.round((p.state === 'done' ? 1 : w.pos / Math.max(1, w.total)) * W)
   const marks = new Map<number, string>()
@@ -758,7 +864,7 @@ function barText(p: Plan, W: number): { done: string; rest: string } {
   let done = ''
   let rest = ''
   for (let x = 0; x < W; x++) {
-    const ch = marks.get(x) ?? (x < filled ? '━' : '─')
+    const ch = words ? (words[(x + shift) % words.length] ?? ' ') : (marks.get(x) ?? (x < filled ? '━' : '─'))
     if (x < filled) done += ch
     else rest += ch
   }
@@ -828,21 +934,14 @@ function meterSvg(m: Meter): string {
   const fill = (used / 100) * METER_W
   const from = lastMeter.get(m.key) ?? fill
   lastMeter.set(m.key, fill)
-  const tube = aurora('m', METER_W, METER_H, (METER_SVG_H - METER_H) / 2, fill, from, TONE[levelOf(used)], used >= 90 ? 'breathe' : 'calm', seedOf(m.key))
+  const y = (METER_SVG_H - METER_H) / 2
+  // past the alert line the 5-hour meter turns into the sign too
+  const tube =
+    m.key === 'five_hour' && used >= QUOTA_ALERT
+      ? sign('m', METER_W, METER_H, y, fill, from)
+      : aurora('m', METER_W, METER_H, y, fill, from, TONE[levelOf(used)], used >= 90 ? 'breathe' : 'calm', seedOf(m.key))
   const tick = m.elapsed === null ? '' : `<rect x="${Math.min(METER_W - 1.5, Math.max(0, m.elapsed * METER_W - 0.75)).toFixed(1)}" y="1" width="1.5" height="${METER_SVG_H - 2}" rx=".75" fill="${PACE}"/>`
   return `${svgOpen(METER_W, METER_SVG_H)}${CSS}<defs>${tube.defs}</defs>${tube.body}${tick}</svg>`
-}
-
-// the quota alert by the 5-hour meter: its words in a red pill that blinks by itself, so nothing redraws for it;
-// a mid red reads on either theme
-const ALERT_H = 18
-const alertW = (words: string) => Math.ceil(textWidth(words, 11.5)) + 22
-function alertSvg(words: string): string {
-  const W = alertW(words)
-  return (
-    `${svgOpen(W, ALERT_H)}${CSS}<g class="qa"><rect x=".75" y=".75" width="${W - 1.5}" height="${ALERT_H - 1.5}" rx="${(ALERT_H - 1.5) / 2}" fill="${TONE.error.mid}" fill-opacity=".14" stroke="${TONE.error.mid}" stroke-width="1.5"/>` +
-    `<text x="${W / 2}" y="${ALERT_H / 2 + 4}" text-anchor="middle" class="qt">${esc(words)}</text></g></svg>`
-  )
 }
 
 // the desktop's meters row stays on one line: what the band has no room for drops, least needed first: the 5-hour
@@ -852,14 +951,13 @@ function alertSvg(words: string): string {
 const DOING_PX = 88
 const resetWords = (m: Meter, drop: number) =>
   m.resetIn && drop < (m.key === 'five_hour' ? 3 : 2) ? `↻ ${m.resetIn}${m.resetAt && drop < 1 ? ` · ${m.resetAt}` : ''}` : ''
-function meterDrop(meters: Meter[], tokenWords: string, isAlert: boolean, cols: number): number {
+function meterDrop(meters: Meter[], tokenWords: string, cols: number): number {
   const px = (s: string) => textWidth(s, 14)
   const width = (drop: number) =>
     meters.reduce((w, m) => {
       const reset = resetWords(m, drop)
       return (
         w + 24 + px(m.label) + 8 + METER_W + 8 + px(meterValue(m)) * 1.1 + (reset ? 8 + px(reset) : 0) +
-        (m.key === 'five_hour' && isAlert ? 8 + alertW(say.quota) : 0) +
         (m.key === 'seven_day' && tokenWords ? 8 + SANKEY_ICON_W + (drop < 4 ? 8 + px(tokenWords) : 0) : 0)
       )
     }, ICON + 8 + DOING_PX)
@@ -1101,7 +1199,7 @@ export const register: Register = (on, options) => {
   let isPlanTouched = false
   let isWaitingOnBackground = false
   // where the band was drawn last, so the terminal alone gets a second-by-second redraw (its clocks, its alert blink)
-  let band: { surface: string; isWorking: boolean; isAlert: boolean } | null = null
+  let band: { surface: string; isWorking: boolean; isGlitch: boolean } | null = null
   // session.start fires again on an enable or a worker respawn, which may keep this module's variables
   let timers: { cancel: () => void }[] = []
 
@@ -1159,7 +1257,7 @@ export const register: Register = (on, options) => {
       // the desktop's clocks and effects move inside its drawings; the terminal draws times as text
       $.clock.every(1000, async () => {
         if (band?.surface !== 'terminal') return
-        if (band.isWorking || band.isAlert || (await read($, plans)).some(p => (p.agents ?? []).some(isLive))) $.ui.invalidate('ui.render')
+        if (band.isWorking || band.isGlitch || (await read($, plans)).some(p => (p.agents ?? []).some(isLive))) $.ui.invalidate('ui.render')
       }),
     ]
 
@@ -1406,10 +1504,9 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const cols = Math.max(30, e.props.bodyColumns || 100)
     const meters = metersOf(u, now)
-    // past the alert line (a window that has reset reads 0 here); the terminal blinks by redrawing each second
-    const isAlert = meters.some(m => m.key === 'five_hour' && (m.used ?? 0) >= QUOTA_ALERT)
-    const isBlinkOn = Math.floor(now / 1000) % 2 === 0
-    band = { surface: e.surface, isWorking: e.props.isWorking, isAlert }
+    // a window that has reset reads 0 here; while the quota glitches the terminal steps its words by redrawing each second
+    const isGlitch = quotaGlitch($, meters.find(m => m.key === 'five_hour')?.used ?? 0, now)
+    band = { surface: e.surface, isWorking: e.props.isWorking, isGlitch }
     const tokens = u.tokens && tokenSum(u.tokens) > 0 ? u.tokens : null
     const budget = childBudget(all.length)
     // drawing memory of bars no longer listed (closed, or pushed out past MAX_BARS) goes
@@ -1454,7 +1551,7 @@ export const register: Register = (on, options) => {
       const titlePx = Math.min(Math.round(total * 0.3), Math.max(48, ...all.map(p => Math.round(textWidth(p.title, 14)))))
       const trackW = Math.max(120, Math.min(1400, total - titlePx - 144))
       // one line whatever runs: see meterDrop
-      const drop = meterDrop(meters, tokenWords, isAlert, cols)
+      const drop = meterDrop(meters, tokenWords, cols)
       meterRow = (
         <Box key="meters" flexDirection="row" columnGap={3} alignItems="center" flexWrap="nowrap">
           <Box key="doing" flexDirection="row" columnGap={1} alignItems="center">
@@ -1474,11 +1571,6 @@ export const register: Register = (on, options) => {
                   {meterValue(m)}
                 </Text>
                 {reset ? <Text dimColor>{reset}</Text> : null}
-                {m.key === 'five_hour' && isAlert ? (
-                  <Box key="quota">
-                    <Svg source={alertSvg(say.quota)} alt={say.quota} width={alertW(say.quota)} height={ALERT_H} />
-                  </Box>
-                ) : null}
                 {m.key === 'seven_day' ? tokenNode(drop < 4) : null}
               </Box>
             )
@@ -1489,7 +1581,7 @@ export const register: Register = (on, options) => {
       const focus = focusOf(all)?.id
       bars = all.map(p => {
         const traffic = (e.props.isWorking && p.id === focus ? 1 : 0) + (p.agents ?? []).filter(isLive).length
-        const track = trackSvg(p, trackW, traffic, isAlert)
+        const track = trackSvg(p, trackW, traffic, isGlitch)
         const v = visibleAgents(p, Math.max(1, budget - (p.note && p.state !== 'running' ? 1 : 0)))
         const rows: RenderChildren[] = []
         const hidden = v?.hidden ?? []
@@ -1569,7 +1661,6 @@ export const register: Register = (on, options) => {
         meters.reduce((sum, m) => sum + cellsOf(m.label) + 12 + meterValue(m).length + (m.resetIn ? 2 + m.resetIn.length + (m.resetAt ? 8 : 0) : 0), 0) +
         3 * (meters.length - 1) +
         (tokens ? 24 : 0) +
-        (isAlert ? cellsOf(say.quota) + 3 : 0) +
         cellsOf(doing) + 5
       const hasSegments = rowCells <= cols - 2
       meterRow = (
@@ -1593,11 +1684,6 @@ export const register: Register = (on, options) => {
                   {meterValue(m)}
                 </Text>
                 {m.resetIn ? <Text dimColor>{`${m.resetIn}${m.resetAt ? ` (${m.resetAt})` : ''}`}</Text> : null}
-                {m.key === 'five_hour' && isAlert ? (
-                  <Box key="quota">
-                    <Text color={STATE_COLOR.error} bold inverse={isBlinkOn}>{` ${say.quota} `}</Text>
-                  </Box>
-                ) : null}
                 {m.key === 'seven_day' ? tokenNode() : null}
               </Box>
             )
@@ -1609,9 +1695,10 @@ export const register: Register = (on, options) => {
       bars = all.map(p => {
         const w = where(p)
         const color = STATE_COLOR[p.state]
-        const bar = barText(p, trackW)
-        // past the alert line an open bar blinks red, a beat a second
-        const isFlash = isAlert && isBlinkOn && p.state !== 'done'
+        // a failed bar reads ERROR, an open one while the quota glitches WARNING in the band's amber, a cell a second
+        const words = p.state === 'error' ? 'ERROR // ' : isGlitch && p.state !== 'done' ? 'WARNING // ' : ''
+        const ink = words && p.state !== 'error' ? GLITCH.warn.core : color
+        const bar = barText(p, trackW, words, Math.floor(now / 1000))
         // no hover on the terminal: the label carries the stage, the step and the time
         const label =
           p.state === 'done'
@@ -1627,8 +1714,8 @@ export const register: Register = (on, options) => {
                 <Text wrap="truncate">{p.title}</Text>
               </Box>
               <Text>
-                <Text color={isFlash ? STATE_COLOR.error : color}>{bar.done}</Text>
-                <Text color={isFlash ? STATE_COLOR.error : undefined} dimColor={!isFlash}>
+                <Text color={ink}>{bar.done}</Text>
+                <Text color={words ? ink : undefined} dimColor>
                   {bar.rest}
                 </Text>
               </Text>
