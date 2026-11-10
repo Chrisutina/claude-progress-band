@@ -10,7 +10,7 @@ const BAND = {
   requestId: 'above-prompt',
   surface: 'desktop',
   viewport: { columns: 120, rows: 40 },
-  props: { hasSurvey: false, isWorking: false, maxRows: 16, bodyColumns: 110, scroll: { offset: 0, bodyRows: 16 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 16, bodyColumns: 110, scroll: { offset: 0, bodyRows: 16 }, view: {} },
 } as const
 type On = Parameters<typeof mock.clock>[0]
 

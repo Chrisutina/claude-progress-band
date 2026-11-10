@@ -1,5 +1,13 @@
 # 更新记录 / Changelog
 
+## 0.5.1 · 2026-11-10
+
+- 适配 Claude Code 2.1.322：横栏新增 `isCollapsed` 属性（`ctrl+x ctrl+a` 或点 `[-]` 折叠）。折叠时终端不再每秒重绘，展开时属性变化，立即重绘；旧版本没有这个属性，按未折叠处理。
+- 测试的模拟属性补上 `isCollapsed`，新增折叠测试。在 2.1.322 上共 32 项自动测试通过，`tsc` 类型检查无错误。
+
+- Claude Code 2.1.322: the band has a new `isCollapsed` prop (collapse with `ctrl+x ctrl+a` or its `[-]`). While collapsed the terminal skips its second-by-second redraw; expanding changes the props and redraws at once. An older engine without the prop counts as expanded.
+- Test props carry `isCollapsed`, and a new test covers the collapsed band. All 32 automated tests pass on 2.1.322, and `tsc` reports no errors.
+
 ## 0.5.0 · 2026-10-06
 
 - 出错改成故障带：出错的进度条整条变成暗色条，ERROR 带着青红重影流动，每 2.2 秒撕裂错位一次。取代红色极光停住闪烁。

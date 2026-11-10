@@ -6,7 +6,7 @@ const START = { surface: 'desktop', isInteractive: true, cwd: '/work' } as const
 const BAND = {
   plugin: 'progress-band', component: 'AbovePrompt', requestId: 'render-boundary',
   surface: 'desktop', viewport: { columns: 40, rows: 40 },
-  props: { hasSurvey: false, isWorking: false, maxRows: 16, bodyColumns: 40, scroll: { offset: 0, bodyRows: 16 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 16, bodyColumns: 40, scroll: { offset: 0, bodyRows: 16 }, view: {} },
 } as const
 type On = Parameters<typeof mock.clock>[0]
 

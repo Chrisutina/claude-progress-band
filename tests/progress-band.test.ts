@@ -11,7 +11,7 @@ const BAND = {
   component: 'AbovePrompt',
   requestId: 'above-prompt',
   viewport: { columns: 120, rows: 40 },
-  props: { hasSurvey: false, isWorking: false, maxRows: 16, bodyColumns: 110, scroll: { offset: 0, bodyRows: 16 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 16, bodyColumns: 110, scroll: { offset: 0, bodyRows: 16 }, view: {} },
 } as const
 
 // the stub registrar a test function receives as its second argument
@@ -217,6 +217,35 @@ test('the strip says what the main conversation does and never freezes: its atom
   expect(during).toContain('Read')
   await $.turn.complete({ answer: 'done', durationMs: 83_000, isAborted: false, turnId: 't1', reason: 'answer' })
   expect((await strip()).texts).toContain('空闲')
+})
+
+test('a collapsed band still draws but skips the terminal\'s second-by-second redraw, which comes back once it expands', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  stubSession(on, new Map())
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  let redraws = 0
+  on('ui.invalidate', ($, e) => {
+    if (e.event === 'ui.render') redraws++
+    return { value: undefined }
+  })
+  await $.session.start(START)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  const ticks = async () => {
+    const before = redraws
+    await clock.advance(3000)
+    return redraws - before
+  }
+
+  // collapsed (ctrl+x ctrl+a or [-] since 2.1.322): the tree still returns, and nothing redraws it each second
+  const folded = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true, isCollapsed: true } })
+  expect((await folded.findAll({ type: 'Text' })).map(x => x.text).join('')).toContain('上下文')
+  expect(await ticks()).toBe(0)
+  await folded.unmount()
+
+  // expanded, a working band ticks again every second
+  const open = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true } })
+  expect(await ticks()).toBe(3)
+  await open.unmount()
 })
 
 test('the desktop meters stay on one line: what has no room drops, and a long tool name changes nothing else', async ($, on) => {

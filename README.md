@@ -2,7 +2,7 @@
 
 Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**极光进度条**和它的**子代理**。界面文字可选中文或英文。
 
-版本 **0.5.0** · [更新记录](CHANGELOG.md) · [English](#english)
+版本 **0.5.1** · [更新记录](CHANGELOG.md) · [English](#english)
 
 ![浅色主题](docs/light.png)
 ![深色主题](docs/dark.png)
@@ -42,6 +42,7 @@ Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 
 - 文字使用应用自身的字体和颜色，浅色、深色主题都能看清。
 - 界面文字可选中文（默认）或英文，见[语言](#语言)。
 - 遵循系统的"减少动态效果"设置（极光、故障带、点阵表和电子都停下）。
+- Claude Code 2.1.322 起横栏可以折叠（`ctrl+x ctrl+a` 或点 `[-]`）。折叠时终端不再每秒重绘，展开时立即刷新。
 - 终端里用字符画显示同样的信息：出错的进度条写满 ERROR，额度提醒那 6 秒里未完成的写满 WARNING，每秒往左走一格。
 
 ## 安装
@@ -119,7 +120,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；本次发布在 Windows、Claude Code **2.1.288** 上通过 **31 项测试**。
+第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；0.5.1 在 Claude Code **2.1.322**（Linux）上通过 **32 项测试**，并用 2.1.322 的类型做了 `tsc` 检查；0.5.0 在 Windows、Claude Code 2.1.288 上通过 31 项测试。
 
 模组从这个目录加载一次之后，Claude Code 会写出 `.claude-plugin/types/`（已加入 `.gitignore`），`tsconfig.json` 会用到它；也可以在会话里运行 `/plugin-types` 生成类型。
 
@@ -159,7 +160,7 @@ A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly 
 - **Plans** can change mid-run; finished steps are kept by title. Bars are saved per session and come back on resume.
 - **Cleanup:** your next prompt clears the bars the previous one finished; unfinished bars stay, and ✕ closes any bar.
 - **Subagent rows:** name, model and effort, current tool, time.
-- **Themes and motion:** follows the app's light or dark theme and the OS "reduce motion" setting (the aurora, the glitch bands, the dot-matrix meter and the electrons then stand still). The terminal shows a text version: a failed bar reads ERROR, and during an alert's six seconds an open bar reads WARNING, both stepping a cell a second.
+- **Themes and motion:** follows the app's light or dark theme and the OS "reduce motion" setting (the aurora, the glitch bands, the dot-matrix meter and the electrons then stand still). From Claude Code 2.1.322 the band can be collapsed (`ctrl+x ctrl+a` or its `[-]`); while collapsed the terminal skips its second-by-second redraw, and expanding redraws at once. The terminal shows a text version: a failed bar reads ERROR, and during an alert's six seconds an open bar reads WARNING, both stepping a cell a second.
 
 **Install** (Claude Code v2.1.286 or later; if the mod does not load on v2.1.286, set `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and restart):
 
@@ -200,7 +201,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-Release verification: **31 tests passed on Windows with Claude Code 2.1.288**, the quota alert, the error band and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
+Release verification: 0.5.1 passes **32 tests on Claude Code 2.1.322** (Linux) and type-checks with `tsc` against 2.1.322's types; 0.5.0 passed 31 tests on Windows with Claude Code 2.1.288, the quota alert, the error band and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
 
 The desktop UI has been used on Windows. Terminal rendering and the English UI have automated tests and screenshot checks; macOS, VS Code and mobile have not been tested manually. The mods API is early and may change with Claude Code updates. The 5-hour reading updates with each of Claude's replies and, once a minute, from this machine's other sessions; a glitch shows the moment this session sees the reading cross a new step. A new session, or `/reload-plugins`, that starts past 90% flashes once.
 

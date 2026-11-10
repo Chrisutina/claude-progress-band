@@ -6,7 +6,7 @@ const START = { surface: 'terminal', isInteractive: true, cwd: '/work' } as cons
 const BAND = {
   plugin: 'progress-band', component: 'AbovePrompt', requestId: 'events-band', surface: 'terminal',
   viewport: { columns: 120, rows: 40 },
-  props: { hasSurvey: false, isWorking: false, maxRows: 16, bodyColumns: 110, scroll: { offset: 0, bodyRows: 16 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 16, bodyColumns: 110, scroll: { offset: 0, bodyRows: 16 }, view: {} },
 } as const
 const LIMITS = [
   { kind: 'five_hour', percentUsed: 62, resetsAt: new Date(NOW + 2 * 3_600_000).toISOString() },

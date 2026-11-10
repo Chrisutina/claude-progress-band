@@ -1198,8 +1198,10 @@ export const register: Register = (on, options) => {
   let mainTools = 0
   let isPlanTouched = false
   let isWaitingOnBackground = false
-  // where the band was drawn last, so the terminal alone gets a second-by-second redraw (its clocks, its alert blink)
-  let band: { surface: string; isWorking: boolean; isGlitch: boolean } | null = null
+  // where the band was drawn last, so the terminal alone gets a second-by-second redraw (its clocks, its alert blink);
+  // a band the person collapsed (2.1.322: ctrl+x ctrl+a or its [-]) shows nothing, so it skips that redraw, and
+  // expanding it changes its props, which redraws it at once
+  let band: { surface: string; isWorking: boolean; isGlitch: boolean; isCollapsed: boolean } | null = null
   // session.start fires again on an enable or a worker respawn, which may keep this module's variables
   let timers: { cancel: () => void }[] = []
 
@@ -1256,7 +1258,7 @@ export const register: Register = (on, options) => {
       }),
       // the desktop's clocks and effects move inside its drawings; the terminal draws times as text
       $.clock.every(1000, async () => {
-        if (band?.surface !== 'terminal') return
+        if (band?.surface !== 'terminal' || band.isCollapsed) return
         if (band.isWorking || band.isGlitch || (await read($, plans)).some(p => (p.agents ?? []).some(isLive))) $.ui.invalidate('ui.render')
       }),
     ]
@@ -1506,7 +1508,8 @@ export const register: Register = (on, options) => {
     const meters = metersOf(u, now)
     // a window that has reset reads 0 here; while the quota glitches the terminal steps its words by redrawing each second
     const isGlitch = quotaGlitch($, meters.find(m => m.key === 'five_hour')?.used ?? 0, now)
-    band = { surface: e.surface, isWorking: e.props.isWorking, isGlitch }
+    // isCollapsed is new in 2.1.322; an older engine leaves it out
+    band = { surface: e.surface, isWorking: e.props.isWorking, isGlitch, isCollapsed: e.props.isCollapsed === true }
     const tokens = u.tokens && tokenSum(u.tokens) > 0 ? u.tokens : null
     const budget = childBudget(all.length)
     // drawing memory of bars no longer listed (closed, or pushed out past MAX_BARS) goes
