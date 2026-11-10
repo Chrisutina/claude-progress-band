@@ -37,7 +37,7 @@ Tasks needing more than ~3 edits or commands get a bar via ${TOOL}: create it on
 // what Claude reads (the rules, tool results, refusals) is English in both
 const ZH = {
   state: { running: '进行中', needs_input: '需要输入', error: '出错', done: '完成' } as Record<PlanState, string>,
-  meter: { context: '上下文', five_hour: '5小时', seven_day: '每周', spend_limit: '额度' } as Record<string, string>,
+  meter: { cache: '缓存', context: '上下文', five_hour: '5小时', seven_day: '每周', spend_limit: '额度' } as Record<string, string>,
   kinds: ['输入', '输出', '缓存写', '缓存读'],
   session: '本会话',
   others: '其他会话',
@@ -61,10 +61,14 @@ const ZH = {
   rowDone: (title: string, steps: number, time: string) => `${title}：完成，共 ${steps} 步${time ? `，用时 ${time}` : ''}`,
   rowOpen: (title: string, state: string, at: string, percent: number, note: string) => `${title}：${state}，${at}，${percent}%${note ? `，${note}` : ''}`,
   tokensAlt: (week: string, kinds: string[], session: string, others: string) => `本周 ${week} tokens：${kinds.join('，')}；本会话 ${session}，其他会话 ${others}`,
+  cacheCard: (rate: string) => `本会话缓存命中率 ${rate}`,
+  cacheSplit: (read: string, written: string, fresh: string) => `读缓存 ${read} · 写缓存 ${written} · 未缓存 ${fresh}`,
+  cacheLast: (rate: string) => `最近一次请求 ${rate}`,
+  cacheNone: '本会话还没有请求',
 }
 const EN: typeof ZH = {
   state: { running: 'running', needs_input: 'needs input', error: 'error', done: 'done' },
-  meter: { context: 'Context', five_hour: '5-hour', seven_day: 'Weekly', spend_limit: 'Spend' },
+  meter: { cache: 'Cache', context: 'Context', five_hour: '5-hour', seven_day: 'Weekly', spend_limit: 'Spend' },
   kinds: ['input', 'output', 'cache write', 'cache read'],
   session: 'this session',
   others: 'other sessions',
@@ -87,6 +91,10 @@ const EN: typeof ZH = {
   rowDone: (title, steps, time) => `${title}: done, ${steps} steps${time ? `, took ${time}` : ''}`,
   rowOpen: (title, state, at, percent, note) => `${title}: ${state}, ${at}, ${percent}%${note ? `, ${note}` : ''}`,
   tokensAlt: (week, kinds, session, others) => `This week ${week} tokens: ${kinds.join(', ')}; this session ${session}, other sessions ${others}`,
+  cacheCard: rate => `Session cache hit rate ${rate}`,
+  cacheSplit: (read, written, fresh) => `read ${read} · written ${written} · uncached ${fresh}`,
+  cacheLast: rate => `last request ${rate}`,
+  cacheNone: 'No requests in this session yet',
 }
 // set by register from its options; a change in /config reloads the module
 let say = ZH
@@ -566,9 +574,6 @@ function liveSource(id: string, template: string, now: number): string {
   return source
 }
 
-// the session strip's icon while no turn runs: the atom in grey, spinning slowly
-const IDLE_ICON = atomIcon({ light: '#B4B2A9', mid: '#8C8A84', deep: '#8C8A84' }, 0.35, '')
-
 // ---------- token sankey ----------
 // the week's tokens as a small Sankey of blocks: the four kinds flow into the week's total, which splits into
 // this session and the machine's other sessions. Shares are true to size, except that no flow draws thinner
@@ -904,8 +909,23 @@ const untilReset = (ms: number) => {
   return d > 0 ? `${d}d${h}h` : h > 0 ? `${h}h${String(m % 60).padStart(2, '0')}m` : `${m % 60}m`
 }
 
-// resetIn: the countdown; resetAt: the clock time, for the 5-hour window; elapsed: the share of the window gone
-type Meter = { key: string; label: string; used: number | null; resetIn: string | null; resetAt: string | null; elapsed: number | null }
+// resetIn: the countdown; resetAt: the clock time, for the 5-hour window; elapsed: the share of the window gone;
+// level: a tone of its own, for a figure where more is better (the cache hit rate), which then never breathes
+type Meter = { key: string; label: string; used: number | null; resetIn: string | null; resetAt: string | null; elapsed: number | null; level?: PlanState }
+
+// ---------- cache hit rate ----------
+// the share of this session's input that came from the prompt cache: cache reads over everything the
+// requests read (uncached input, cache writes, cache reads); output is no input and stays out
+const cacheRate = (c: TokenCounts | null | undefined): number | null => {
+  const read = c ? c[0] + c[2] + c[3] : 0
+  return c && read > 0 ? (c[3] / read) * 100 : null
+}
+// a long session reads nearly all of it from the cache: green from 80%, amber from 50%, red below
+const cacheLevel = (rate: number): PlanState => (rate >= 80 ? 'done' : rate >= 50 ? 'needs_input' : 'error')
+const cacheMeter = (c: TokenCounts | null | undefined): Meter => {
+  const rate = cacheRate(c)
+  return { key: 'cache', label: say.meter.cache ?? '', used: rate, resetIn: null, resetAt: null, elapsed: null, level: rate === null ? undefined : cacheLevel(rate) }
+}
 
 function metersOf(u: Usage, now: number): Meter[] {
   const out: Meter[] = [{ key: 'context', label: say.meter.context ?? '', used: u.contextPercent, resetIn: null, resetAt: null, elapsed: null }]
@@ -939,16 +959,15 @@ function meterSvg(m: Meter): string {
   const tube =
     m.key === 'five_hour' && used >= QUOTA_ALERT
       ? sign('m', METER_W, METER_H, y, fill, from)
-      : aurora('m', METER_W, METER_H, y, fill, from, TONE[levelOf(used)], used >= 90 ? 'breathe' : 'calm', seedOf(m.key))
+      : aurora('m', METER_W, METER_H, y, fill, from, TONE[m.level ?? levelOf(used)], !m.level && used >= 90 ? 'breathe' : 'calm', seedOf(m.key))
   const tick = m.elapsed === null ? '' : `<rect x="${Math.min(METER_W - 1.5, Math.max(0, m.elapsed * METER_W - 0.75)).toFixed(1)}" y="1" width="1.5" height="${METER_SVG_H - 2}" rx=".75" fill="${PACE}"/>`
   return `${svgOpen(METER_W, METER_SVG_H)}${CSS}<defs>${tube.defs}</defs>${tube.body}${tick}</svg>`
 }
 
 // the desktop's meters row stays on one line: what the band has no room for drops, least needed first: the 5-hour
 // reset's clock time (1), the weekly reset (2), the 5-hour reset (3), the token words, their Sankey staying (4).
-// Widths are estimated as the desktop draws them, ~8 px a cell and text at ~14 px. The activity label is cut to a
-// fixed room, so a long tool name neither moves this choice nor pushes the row onto a second line
-const DOING_PX = 88
+// Widths are estimated as the desktop draws them, ~8 px a cell and text at ~14 px. The cache meter leads the row
+// and is measured as one of them; nothing in the row follows the tool in use, so no tool name can move this choice
 const resetWords = (m: Meter, drop: number) =>
   m.resetIn && drop < (m.key === 'five_hour' ? 3 : 2) ? `↻ ${m.resetIn}${m.resetAt && drop < 1 ? ` · ${m.resetAt}` : ''}` : ''
 function meterDrop(meters: Meter[], tokenWords: string, cols: number): number {
@@ -960,7 +979,7 @@ function meterDrop(meters: Meter[], tokenWords: string, cols: number): number {
         w + 24 + px(m.label) + 8 + METER_W + 8 + px(meterValue(m)) * 1.1 + (reset ? 8 + px(reset) : 0) +
         (m.key === 'seven_day' && tokenWords ? 8 + SANKEY_ICON_W + (drop < 4 ? 8 + px(tokenWords) : 0) : 0)
       )
-    }, ICON + 8 + DOING_PX)
+    }, -24)
   return [0, 1, 2, 3].find(drop => width(drop) <= cols * 8 - 24) ?? 4
 }
 
@@ -988,7 +1007,11 @@ let tallyQueue: Promise<unknown> = Promise.resolve()
 
 const tallySum = (hours: Tally) => Object.values(hours).reduce((sum, c) => sum + tokenSum(c), 0)
 
-function countTokens($: EngineInterface, counts: TokenCounts) {
+// the four kinds summed over a session's hours
+const tallyCounts = (hours: Tally) => Object.values(hours).reduce<TokenCounts>((sum, c) => addCounts(sum, c), [0, 0, 0, 0])
+
+// isMain: a request of the main conversation, not an agent's: its counts become the session's last request
+function countTokens($: EngineInterface, counts: TokenCounts, isMain = false) {
   const moment = Promise.all([$.session.id(), $.clock.now()])
   tallyQueue = tallyQueue
     .then(async () => {
@@ -1000,7 +1023,7 @@ function countTokens($: EngineInterface, counts: TokenCounts) {
       hours[String(hour)] = addCounts(hours[String(hour)] ?? null, counts)
       for (const h of Object.keys(hours)) if (Number(h) < now - WEEK_MS - HOUR_MS) delete hours[h]
       await update($, usage, u => ({ ...u, tokens: addCounts(u.tokens, counts) }))
-      await update($, session, s => ({ ...s, tokens: tallySum(hours) }))
+      await update($, session, s => ({ ...s, tokens: tallySum(hours), cache: tallyCounts(hours), last: isMain ? counts : s.last }))
       await $.store.set(key, hours)
     })
     .catch(() => undefined)
@@ -1023,6 +1046,7 @@ function refreshTokens($: EngineInterface) {
     const own = TOKENS + (await $.session.id())
     let sum: TokenCounts = [0, 0, 0, 0]
     let ownSum = 0
+    let ownCounts: TokenCounts = [0, 0, 0, 0]
     for (const key of await $.store.keys()) {
       if (!key.startsWith(TOKENS)) continue
       const hours = tallyOf(await $.store.get(key))
@@ -1035,11 +1059,14 @@ function refreshTokens($: EngineInterface) {
         const at = Number(h)
         // ponytail: hour buckets, so the hour the window starts in counts whole
         if (at <= now && at + HOUR_MS > since) sum = addCounts(sum, c)
-        if (key === own) ownSum += tokenSum(c)
+        if (key === own) {
+          ownSum += tokenSum(c)
+          ownCounts = addCounts(ownCounts, c)
+        }
       }
     }
     await update($, usage, u => ({ ...u, tokens: sum }))
-    await update($, session, s => ({ ...s, tokens: ownSum }))
+    await update($, session, s => ({ ...s, tokens: ownSum, cache: ownCounts }))
   })
   return tallyQueue
 }
@@ -1271,6 +1298,9 @@ export const register: Register = (on, options) => {
     await restore($)
     const own = await $.session.usage()
     await update($, usage, u => ({ ...u, contextPercent: own.context.percent ?? null }))
+    // the session it switched to: its own tokens and cache counts now, not at the next minute, and no last request yet
+    await update($, session, () => ({ tokens: 0 }))
+    await refreshTokens($)
 
     return next(e)
   })
@@ -1466,7 +1496,7 @@ export const register: Register = (on, options) => {
     // every request reports its own tokens as it ends, the main loop's and each agent's, so the week's
     // count moves while a turn runs rather than after it; awaited (a few store calls), so the count shown
     // is current before the loop moves on
-    if (result.usage) await countTokens($, countsOf(result.usage))
+    if (result.usage) await countTokens($, countsOf(result.usage), !e.agentId)
 
     return result
   })
@@ -1554,14 +1584,24 @@ export const register: Register = (on, options) => {
       const titlePx = Math.min(Math.round(total * 0.3), Math.max(48, ...all.map(p => Math.round(textWidth(p.title, 14)))))
       const trackW = Math.max(120, Math.min(1400, total - titlePx - 144))
       // one line whatever runs: see meterDrop
-      const drop = meterDrop(meters, tokenWords, cols)
+      // this session's cache hit rate leads the row; hovering it opens what it is made of
+      const cache = cacheMeter(ses.cache)
+      const cacheColor = cache.level ? STATE_COLOR[cache.level] : undefined
+      const lastRate = cacheRate(ses.last)
+      const drop = meterDrop([cache, ...meters], tokenWords, cols)
       meterRow = (
         <Box key="meters" flexDirection="row" columnGap={3} alignItems="center" flexWrap="nowrap">
-          <Box key="doing" flexDirection="row" columnGap={1} alignItems="center">
-            <Svg source={isBusy ? stateIcon('running', true) : IDLE_ICON} alt={doing} width={ICON} height={ICON} />
-            <Text color={isBusy ? STATE_COLOR.running : undefined} dimColor={!isBusy}>
-              {cut(doing, DOING_PX, s => textWidth(s, 14))}
+          <Box key="cache" flexDirection="row" columnGap={1} alignItems="center">
+            <Text dimColor>{cache.label}</Text>
+            <Svg source={meterSvg(cache)} alt={`${cache.label} ${meterValue(cache)}`} width={METER_W} height={METER_SVG_H} />
+            <Text color={cacheColor} dimColor={cacheColor === undefined} bold>
+              {meterValue(cache)}
             </Text>
+            <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }} flexDirection="column" paddingX={1}>
+              <Text bold>{ses.cache && cache.used !== null ? say.cacheCard(meterValue(cache)) : say.cacheNone}</Text>
+              {ses.cache && cache.used !== null ? <Text>{say.cacheSplit(compact(ses.cache[3]), compact(ses.cache[2]), compact(ses.cache[0]))}</Text> : null}
+              {lastRate === null ? null : <Text dimColor>{say.cacheLast(`${Math.round(lastRate)}%`)}</Text>}
+            </Box>
           </Box>
           {meters.map(m => {
             const color = m.used === null ? undefined : STATE_COLOR[levelOf(m.used)]

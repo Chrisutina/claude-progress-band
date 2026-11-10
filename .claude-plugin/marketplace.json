@@ -6,7 +6,7 @@
     {
       "name": "progress-band",
       "source": ".",
-      "description": "Context, 5-hour and weekly usage plus live aurora progress bars for Claude's tasks and their subagents, above the prompt"
+      "description": "Cache hit rate, context, 5-hour and weekly usage plus live aurora progress bars for Claude's tasks and their subagents, above the prompt"
     }
   ]
 }

@@ -1,5 +1,19 @@
 # 更新记录 / Changelog
 
+## 0.6.0 · 2026-11-10
+
+- 桌面版：用量那排最前面的"思考中 / 工具名 / 空闲"换成本会话的缓存命中率：缓存读 ÷（未缓存输入 + 缓存写 + 缓存读）。极光表，越高越好，80% 以上绿、50% 以上橙、更低红；新会话没有请求时显示"—"。悬停显示读缓存 / 写缓存 / 未缓存三项和主对话最近一次请求的命中率。子代理请求计入总数，不算"最近一次"。
+- 终端保持不变，仍显示当前状态。
+- `/resume`、`/clear` 切会话时立即换成那个会话的 token 和缓存数，不再等下一分钟的刷新。
+- 本会话状态新增 `cache`、`last` 两个可选字段，旧版本存下的状态照常读取。
+- 共 33 项自动测试通过（Claude Code 2.1.322），`tsc` 无错误。
+
+- Desktop: the meters' row now leads with this session's cache hit rate, cache reads ÷ (uncached input + cache writes + cache reads), in place of "Thinking" / the tool / "Idle". An aurora meter where more is better: green from 80%, amber from 50%, red below; "—" before the first request. Hover it for the read / written / uncached split and the main conversation's last request. Subagents' requests count in the total but never as the last request.
+- The terminal is unchanged and still shows the current state.
+- `/resume` and `/clear` show the new session's tokens and cache figures at once instead of at the next minute's refresh.
+- The session state gains two optional fields, `cache` and `last`; state saved by older versions reads as before.
+- All 33 automated tests pass on Claude Code 2.1.322, and `tsc` reports no errors.
+
 ## 0.5.1 · 2026-11-10
 
 - 适配 Claude Code 2.1.322：横栏新增 `isCollapsed` 属性（`ctrl+x ctrl+a` 或点 `[-]` 折叠）。折叠时终端不再每秒重绘，展开时属性变化，立即重绘；旧版本没有这个属性，按未折叠处理。

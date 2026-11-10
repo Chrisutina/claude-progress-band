@@ -43,8 +43,9 @@ export type Usage = {
 }
 // what the main conversation does right now: a model request, a tool, or nothing
 export type Activity = { state: 'idle' | 'thinking' | 'tool'; tool: string | null }
-// the tokens this session used
-export type Session = { tokens: number }
+// the tokens this session used; cache: its four kinds summed, for the cache hit rate; last: the main
+// conversation's latest request. Both are absent in what an older version saved
+export type Session = { tokens: number; cache?: TokenCounts; last?: TokenCounts }
 
 declare module 'claude-code' {
   interface PluginState {

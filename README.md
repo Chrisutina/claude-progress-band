@@ -1,13 +1,13 @@
 # claude-progress-band
 
-Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**极光进度条**和它的**子代理**。界面文字可选中文或英文。
+Claude Code 模组：在输入框上方的频段里，实时显示**本会话缓存命中率**、**上下文 / 5 小时 / 每周用量**，以及 Claude 把任务拆成阶段和步骤后的**极光进度条**和它的**子代理**。界面文字可选中文或英文。
 
-版本 **0.5.1** · [更新记录](CHANGELOG.md) · [English](#english)
+版本 **0.6.0** · [更新记录](CHANGELOG.md) · [English](#english)
 
 ![浅色主题](docs/light.png)
 ![深色主题](docs/dark.png)
 
-<sub>中文界面的静态截图，上浅色、下深色：任务进行中（紫色极光，下面挂着子代理）、等你回答（橙色，缓慢呼吸）、出错（故障带）。实际使用时极光在管道里流动，故障带里的字在流、隔一阵撕裂一下，状态图标里的电子绕核转。</sub>
+<sub>中文界面的静态截图，上浅色、下深色：任务进行中（紫色极光，下面挂着子代理）、等你回答（橙色，缓慢呼吸）、出错（故障带）。实际使用时极光在管道里流动，故障带里的字在流、隔一阵撕裂一下，状态图标里的电子绕核转。截图拍于 0.5.0：桌面版用量那排最前面还是状态项，0.6.0 起换成了缓存命中率。</sub>
 
 ## 功能
 
@@ -20,8 +20,10 @@ Claude Code 模组：在输入框上方的频段里，实时显示**上下文 / 
 
 ![额度提醒：5 小时用量 92%，那 6 秒里未完成的进度条变成 WARNING 故障带，5 小时表是点阵箭头](docs/alert.png)
 
-**当前状态**（和用量表同一排，排在最前）
-- "思考中"或正在用的工具名，原子图标里的三颗电子绕核飞转；空闲时显示"空闲"，原子变灰、电子慢慢转。
+**缓存命中率 / 当前状态**（和用量表同一排，排在最前）
+- 桌面版：本会话的缓存命中率，即模型读入的内容里有多少来自提示缓存：缓存读 ÷（未缓存输入 + 缓存写 + 缓存读），输出不算。一样画成极光表，但越高越好：80% 以上绿，50% 以上橙，更低红。
+- 悬停缓存表：显示读缓存 / 写缓存 / 未缓存三项，以及主对话最近一次请求的命中率。子代理的请求计入总数，但不算"最近一次"，因为它们各自从头建缓存，会让这个数来回跳。新会话还没有请求时显示"—"。
+- 终端：仍然显示"思考中"或正在用的工具名，空闲时显示"空闲"。
 - 不重复应用自己已显示的内容：本轮用时看应用的轮次页脚，模型和 effort 看输入框的模型选择器。
 
 **任务进度条**
@@ -98,7 +100,7 @@ claude --plugin-dir "D:\Plugins\claude-progress-band"
 - 子代理行、模型和 effort、当前工具都来自引擎事件，不额外消耗 token。
 - 一轮做了编辑却留着没更新的进度条就结束时，模组会让 Claude 回去更新一次（每轮最多一次）。以问句结尾的回答会把进度条标成"需要输入"。
 - 上下文和限额读数来自 Claude Code 自身（和状态栏同一来源）；限额读数在本机各会话之间共享，新会话一打开就有数。
-- token：每次模型请求结束时，记到本机的插件存储里，按每周窗口汇总。只统计本机装了此模组的 Claude Code 会话（从安装起），不含其他设备和 claude.ai，所以和每周百分比不是同一口径。
+- token：每次模型请求结束时，记到本机的插件存储里，按每周窗口汇总。缓存命中率用的是同一份本会话计数，不额外发请求；`/resume` 切到别的会话时立即换成那个会话的数。只统计本机装了此模组的 Claude Code 会话（从安装起），不含其他设备和 claude.ai，所以和每周百分比不是同一口径。
 - 数据只存在 Claude Code 的插件存储里；模组不联网，不读写任何文件，不启动进程。
 
 ## 已知限制
@@ -120,7 +122,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；0.5.1 在 Claude Code **2.1.322**（Linux）上通过 **32 项测试**，并用 2.1.322 的类型做了 `tsc` 检查；0.5.0 在 Windows、Claude Code 2.1.288 上通过 31 项测试。
+第一条验证 marketplace；第二条验证插件清单、hooks 和状态类型。测试覆盖进度操作、会话恢复、并发保存、用量统计、额度提醒、英文界面以及桌面 / 终端渲染边界；0.6.0 在 Claude Code **2.1.322**（Linux）上通过 **33 项测试**，并用 2.1.322 的类型做了 `tsc` 检查；0.5.0 在 Windows、Claude Code 2.1.288 上通过 31 项测试。
 
 模组从这个目录加载一次之后，Claude Code 会写出 `.claude-plugin/types/`（已加入 `.gitignore`），`tsconfig.json` 会用到它；也可以在会话里运行 `/plugin-types` 生成类型。
 
@@ -140,9 +142,9 @@ claude plugin test .
 
 ## English
 
-A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly usage** (with the week's tokens), and a **live aurora progress bar** for each task Claude splits into stages and steps, with its **subagents** listed under it. The band speaks Chinese (default) or English: set `language` to `en`, see [Language](#language) below.
+A Claude Code mod. The band above the prompt shows **this session's cache hit rate**, **context, 5-hour and weekly usage** (with the week's tokens), and a **live aurora progress bar** for each task Claude splits into stages and steps, with its **subagents** listed under it. The band speaks Chinese (default) or English: set `language` to `en`, see [Language](#language) below.
 
-<sub>The screenshots above show the Chinese UI, frozen, light theme then dark: a task running (violet aurora, its subagents under it), one waiting for your answer (amber, breathing) and one that failed (a glitch band). In use, aurora light flows down the pipes, the glitch band's words stream and tear now and then, and electrons circle in the state icons.</sub>
+<sub>The screenshots above show the Chinese UI, frozen, light theme then dark: a task running (violet aurora, its subagents under it), one waiting for your answer (amber, breathing) and one that failed (a glitch band). In use, aurora light flows down the pipes, the glitch band's words stream and tear now and then, and electrons circle in the state icons. They were taken on 0.5.0, when the desktop row still led with the current state; from 0.6.0 it leads with the cache hit rate.</sub>
 
 **Features**
 - **Usage meters:** green / amber / red by level, and a tick on each limit marking how much of its window has gone. Reset countdowns, plus the 5-hour reset time in local time. The row stays on one line; a narrow window drops the reset time, then the countdowns, then the token words.
@@ -151,7 +153,8 @@ A Claude Code mod. The band above the prompt shows **context, 5-hour and weekly 
 
   ![Quota alert: at 92% of the 5-hour window, for six seconds the unfinished bars are WARNING glitch bands and the 5-hour meter marches dot arrows](docs/alert.png)
 
-- **Current state:** leads the meters' row: "Thinking" or the tool in use, with an atom whose electrons race round; "Idle" with a grey atom spinning slowly. It leaves out what the app already shows: the turn time (the turn footer) and the model and effort (the model picker).
+- **Cache hit rate (desktop):** leads the meters' row: how much of what this session's requests read came from the prompt cache, cache reads ÷ (uncached input + cache writes + cache reads), output left out. An aurora meter where more is better: green from 80%, amber from 50%, red below. Hover it for the read / written / uncached split and the main conversation's last request. Subagents' requests count in the total but never as the last request, since each builds its own cache from scratch. A new session with no request yet reads "—".
+- **Current state (terminal):** leads the meters' row there: "Thinking" or the tool in use; "Idle" otherwise. Neither surface repeats what the app already shows: the turn time (the turn footer) and the model and effort (the model picker).
 - **Task rows:** state, title, bar, percent, close button.
   - The bar is a pipe of aurora: three layers of soft light drift toward a white thumb, big deep clouds slowly, thin bright wisps racing ahead.
   - The aurora streams while something works on it: the current turn, or the task's subagents. More running agents means faster light. While the work pauses it keeps drifting at half speed and the icon's electrons slow down, so the bar never freezes.
@@ -201,7 +204,7 @@ claude plugin validate .claude-plugin/plugin.json
 claude plugin test .
 ```
 
-Release verification: 0.5.1 passes **32 tests on Claude Code 2.1.322** (Linux) and type-checks with `tsc` against 2.1.322's types; 0.5.0 passed 31 tests on Windows with Claude Code 2.1.288, the quota alert, the error band and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
+Release verification: 0.6.0 passes **33 tests on Claude Code 2.1.322** (Linux) and type-checks with `tsc` against 2.1.322's types; 0.5.0 passed 31 tests on Windows with Claude Code 2.1.288, the quota alert, the error band and the English UI included. Generated `.claude-plugin/types/` files support editor types and are ignored by Git; the test runner does not require them. The plugin's own `types/index.d.ts` is included.
 
 The desktop UI has been used on Windows. Terminal rendering and the English UI have automated tests and screenshot checks; macOS, VS Code and mobile have not been tested manually. The mods API is early and may change with Claude Code updates. The 5-hour reading updates with each of Claude's replies and, once a minute, from this machine's other sessions; a glitch shows the moment this session sees the reading cross a new step. A new session, or `/reload-plugins`, that starts past 90% flashes once.
 
@@ -209,7 +212,7 @@ The desktop UI has been used on Windows. Terminal rendering and the English UI h
 - The mod registers a `plan_progress` tool and adds a short rule to the system prompt, so Claude creates a bar for multi-step work and moves it with short ops.
 - Subagent rows come from engine events and cost no tokens.
 - If a turn edited files and left a bar unexplained, Claude is sent back once to update it.
-- Token counts are summed per model request, in local plugin storage, from sessions on this machine that run the mod. Other devices and claude.ai are not counted.
+- Token counts are summed per model request, in local plugin storage, from sessions on this machine that run the mod. Other devices and claude.ai are not counted. The cache hit rate comes from the same per-session counts, with no request of its own; `/resume` switches it to that session's figures at once.
 - No network, no file access, no processes.
 
 The task-progress logic and the self-running clock are adapted from [zycck/claude-mods](https://github.com/zycck/claude-mods) plan-progress (MIT). The usage-meter idea comes from [HolyGrail/claude-mods](https://github.com/HolyGrail/claude-mods); its code is not reused.
